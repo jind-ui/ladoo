@@ -80,6 +80,55 @@
 //!         .run("0.0.0.0:3000");
 //! }
 //! ```
+//!
+//! ## Error Handling
+//!
+//! Ladoo provides three levels of error control:
+//!
+//! ### Level 1: Auto-500
+//!
+//! Use `?` on any `std::error::Error` — it automatically becomes a 500.
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! fn get_user(req: Request, db: State<Database>) -> Result<Json<User>> {
+//!     let user = db.find_user(req.param("id").unwrap())?; // auto-500 on DB error
+//!     Ok(Json(user))
+//! }
+//! ```
+//!
+//! ### Level 2: Controlled Status Codes
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! fn get_user(req: Request, db: State<Database>) -> Result<Json<User>> {
+//!     let id = req.param("id").unwrap();
+//!     let user = db.find_user(id)
+//!         .map_err(|_| Error::not_found("user not found"))?;
+//!     Ok(Json(user))
+//! }
+//! ```
+//!
+//! ### Level 3: Domain Errors
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! #[derive(Debug, AppError)]
+//! enum UserError {
+//!     #[error(status = 404, message = "user not found")]
+//!     NotFound,
+//!     #[error(status = 409, message = "email already taken")]
+//!     DuplicateEmail,
+//! }
+//!
+//! fn create_user(body: Json<NewUser>) -> std::result::Result<Json<User>, UserError> {
+//!     // Return UserError variants directly
+//!     Err(UserError::DuplicateEmail)
+//! }
+//! ```
 
 pub mod app;
 pub mod error;

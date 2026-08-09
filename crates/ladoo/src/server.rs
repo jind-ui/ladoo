@@ -384,4 +384,78 @@ mod tests {
 
         handle.abort();
     }
+
+    #[tokio::test]
+    async fn error_not_found_over_http() {
+        use crate::error::Error;
+
+        let app = App::new().get("/fail", |_req: crate::request::Request| {
+            std::result::Result::<&str, Error>::Err(Error::not_found("item not found"))
+        });
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/fail")).await.unwrap();
+        assert_eq!(resp.status(), 404);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn error_auto_500_over_http() {
+        use crate::error;
+
+        let app = App::new().get("/crash", |_req: crate::request::Request| {
+            fn might_fail() -> error::Result<String> {
+                let bad_bytes = vec![0xFF_u8];
+                let _ = std::str::from_utf8(&bad_bytes)?;
+                Ok("ok".to_string())
+            }
+            might_fail()
+        });
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/crash")).await.unwrap();
+        assert_eq!(resp.status(), 500);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn result_ok_over_http() {
+        use crate::error;
+
+        let app = App::new().get("/ok", |_req: crate::request::Request| {
+            error::Result::Ok("all good")
+        });
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/ok")).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "all good");
+
+        handle.abort();
+    }
+
+    #[cfg(feature = "json")]
+    #[tokio::test]
+    async fn error_json_body_in_prod_mode() {
+        use crate::error::Error;
+
+        std::env::set_var("LADOO_ENV", "production");
+        let app = App::new().get("/err", |_req: crate::request::Request| {
+            std::result::Result::<&str, Error>::Err(Error::bad_request("invalid"))
+        });
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/err")).await.unwrap();
+        assert_eq!(resp.status(), 400);
+        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        assert_eq!(ct, "application/json");
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"], "invalid");
+        assert_eq!(body["status"], 400);
+        std::env::remove_var("LADOO_ENV");
+
+        handle.abort();
+    }
 }
