@@ -143,6 +143,31 @@ impl<T: IntoResponse> IntoResponse for (StatusCode, T) {
     }
 }
 
+/// An HTML response.
+///
+/// Wraps a string and sets `Content-Type: text/html; charset=utf-8`.
+///
+/// # Examples
+///
+/// ```
+/// use ladoo::response::{Html, IntoResponse};
+///
+/// let resp = Html("<h1>Hello</h1>".to_string()).into_response();
+/// assert_eq!(resp.content_type(), Some("text/html; charset=utf-8"));
+/// ```
+pub struct Html(pub String);
+
+impl IntoResponse for Html {
+    fn into_response(self) -> Response {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("text/html; charset=utf-8"),
+        );
+        Response::new(StatusCode::OK, headers, Bytes::from(self.0))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,5 +221,26 @@ mod tests {
         let resp = "".into_response();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.body_bytes(), b"");
+    }
+
+    #[test]
+    fn html_into_response_sets_content_type() {
+        let resp = Html("<h1>Hello</h1>".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.content_type(), Some("text/html; charset=utf-8"));
+        assert_eq!(resp.body_bytes(), b"<h1>Hello</h1>");
+    }
+
+    #[test]
+    fn html_from_str_into_response() {
+        let resp = Html("<p>world</p>".to_string()).into_response();
+        assert_eq!(resp.body_bytes(), b"<p>world</p>");
+    }
+
+    #[test]
+    fn generic_tuple_with_html() {
+        let resp = (StatusCode::OK, Html("<h1>Hi</h1>".to_string())).into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.content_type(), Some("text/html; charset=utf-8"));
     }
 }
