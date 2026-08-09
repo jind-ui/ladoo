@@ -143,6 +143,7 @@ mod tests {
             headers,
             Vec::new(),
             Bytes::copy_from_slice(body),
+            std::sync::Arc::new(crate::state::TypeMap::new()),
         )
     }
 

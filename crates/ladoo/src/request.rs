@@ -14,8 +14,12 @@
 //! assert_eq!(req.path(), "/users/42");
 //! ```
 
+use std::sync::Arc;
+
 use bytes::Bytes;
 use http::{HeaderMap, Method, Uri};
+
+use crate::state::TypeMap;
 
 /// Parameters extracted from the URL path during route matching.
 ///
@@ -34,6 +38,7 @@ pub struct Request {
     headers: HeaderMap,
     params: PathParams,
     body: Bytes,
+    extensions: Arc<TypeMap>,
 }
 
 impl Request {
@@ -46,6 +51,7 @@ impl Request {
         headers: HeaderMap,
         params: PathParams,
         body: Bytes,
+        extensions: Arc<TypeMap>,
     ) -> Self {
         Self {
             method,
@@ -53,6 +59,7 @@ impl Request {
             headers,
             params,
             body,
+            extensions,
         }
     }
 
@@ -76,6 +83,7 @@ impl Request {
             headers: HeaderMap::new(),
             params: Vec::new(),
             body: Bytes::new(),
+            extensions: Arc::new(TypeMap::new()),
         }
     }
 
@@ -100,6 +108,7 @@ impl Request {
             headers: HeaderMap::new(),
             params: Vec::new(),
             body: Bytes::copy_from_slice(body),
+            extensions: Arc::new(TypeMap::new()),
         }
     }
 
@@ -129,6 +138,7 @@ impl Request {
             headers,
             params: Vec::new(),
             body: Bytes::new(),
+            extensions: Arc::new(TypeMap::new()),
         }
     }
 
@@ -204,6 +214,42 @@ impl Request {
     #[allow(dead_code)]
     pub(crate) fn set_params(&mut self, params: PathParams) {
         self.params = params;
+    }
+
+    /// Returns the application state map registered via `App::provide`.
+    pub(crate) fn extensions(&self) -> &TypeMap {
+        &self.extensions
+    }
+
+    /// Register a value on this request's application state, for testing.
+    ///
+    /// Lets you unit test handlers and extractors that depend on
+    /// [`State<T>`](crate::state::State) without starting a server or
+    /// building a full [`App`](crate::app::App).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the request's state is shared with another `Request`
+    /// (for example, after cloning). Test requests own their state
+    /// exclusively, so this should never happen in practice.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ladoo::request::Request;
+    /// use ladoo::state::State;
+    /// use ladoo::extract::FromRequest;
+    /// use http::Method;
+    ///
+    /// let mut req = Request::test(Method::GET, "/");
+    /// req.provide_test_state(42_u32);
+    /// let state = State::<u32>::from_request(&mut req).unwrap();
+    /// assert_eq!(*state, 42);
+    /// ```
+    pub fn provide_test_state<T: Send + Sync + 'static>(&mut self, value: T) {
+        Arc::get_mut(&mut self.extensions)
+            .expect("provide_test_state: request state is shared, cannot mutate")
+            .insert(value);
     }
 }
 
@@ -311,5 +357,27 @@ mod tests {
         assert_eq!(cloned.path(), "/users");
         assert_eq!(cloned.body(), b"body data");
         assert_eq!(cloned.param("id"), Some("42"));
+    }
+
+    #[test]
+    fn test_request_has_empty_extensions() {
+        let req = Request::test(Method::GET, "/");
+        assert!(!req.extensions().contains::<u32>());
+    }
+
+    #[test]
+    fn provide_test_state_makes_value_visible_in_extensions() {
+        let mut req = Request::test(Method::GET, "/");
+        req.provide_test_state(42_u32);
+        assert_eq!(req.extensions().get::<u32>(), Some(&42));
+    }
+
+    #[test]
+    fn provide_test_state_supports_multiple_types() {
+        let mut req = Request::test(Method::GET, "/");
+        req.provide_test_state(42_u32);
+        req.provide_test_state(String::from("hello"));
+        assert_eq!(req.extensions().get::<u32>(), Some(&42));
+        assert_eq!(req.extensions().get::<String>(), Some(&String::from("hello")));
     }
 }

@@ -21,14 +21,10 @@ use std::collections::HashMap;
 /// Values are keyed by their concrete type — each type can appear at most
 /// once. Used internally by the framework; users interact through
 /// `App::provide` and [`State`].
-// Not yet wired into `App` (that lands when `.provide`/`.run` are added),
-// so clippy sees no call sites outside tests.
-#[allow(dead_code)]
 pub(crate) struct TypeMap {
     map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
-#[allow(dead_code)]
 impl TypeMap {
     /// Create an empty type map.
     pub(crate) fn new() -> Self {
@@ -50,6 +46,7 @@ impl TypeMap {
     }
 
     /// Check whether a value of the given type is stored.
+    #[cfg(test)]
     pub(crate) fn contains<T: Send + Sync + 'static>(&self) -> bool {
         self.map.contains_key(&TypeId::of::<T>())
     }
@@ -76,6 +73,7 @@ impl TypeMap {
 ///     })
 ///     .run("0.0.0.0:3000");
 /// ```
+#[derive(Debug)]
 pub struct State<T>(pub T);
 
 impl<T> std::ops::Deref for State<T> {
@@ -90,6 +88,27 @@ impl<T> State<T> {
     /// Consume the wrapper and return the inner value.
     pub fn into_inner(self) -> T {
         self.0
+    }
+}
+
+impl<T: Clone + Send + Sync + 'static> crate::extract::FromRequest for State<T> {
+    /// Extract `T` from application state.
+    ///
+    /// Returns a 500 error naming the missing type if `T` was never
+    /// registered with `App::provide`.
+    fn from_request(req: &mut crate::request::Request) -> Result<Self, crate::response::Response> {
+        use crate::response::IntoResponse;
+
+        match req.extensions().get::<T>() {
+            Some(value) => Ok(State(value.clone())),
+            None => {
+                let type_name = std::any::type_name::<T>();
+                Err(crate::error::Error::internal(format!(
+                    "Missing state: {type_name} — did you forget to call .provide()?"
+                ))
+                .into_response())
+            }
+        }
     }
 }
 
@@ -169,5 +188,60 @@ mod tests {
         let state = State(String::from("hello"));
         let inner = state.into_inner();
         assert_eq!(inner, "hello");
+    }
+
+    use crate::extract::FromRequest;
+    use http::Method;
+
+    #[test]
+    fn state_extractor_gets_provided_value() {
+        let mut req = crate::request::Request::test(Method::GET, "/");
+        req.provide_test_state(42_u32);
+        let extracted = State::<u32>::from_request(&mut req).unwrap();
+        assert_eq!(*extracted, 42);
+    }
+
+    #[test]
+    fn state_extractor_missing_type_returns_500() {
+        let mut req = crate::request::Request::test(Method::GET, "/");
+        let result = State::<u32>::from_request(&mut req);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn state_extractor_missing_type_error_names_type() {
+        std::env::remove_var("LADOO_ENV");
+        std::env::remove_var("APP_ENV");
+        let mut req = crate::request::Request::test(Method::GET, "/");
+        let result = State::<u32>::from_request(&mut req);
+        let resp = result.unwrap_err();
+        assert_eq!(resp.status(), http::StatusCode::INTERNAL_SERVER_ERROR);
+        let body = std::str::from_utf8(resp.body_bytes()).unwrap();
+        assert!(body.contains("u32"));
+    }
+
+    #[test]
+    fn state_extractor_different_types() {
+        let mut req = crate::request::Request::test(Method::GET, "/");
+        req.provide_test_state(42_u32);
+        req.provide_test_state(String::from("hello"));
+        let num = State::<u32>::from_request(&mut req).unwrap();
+        let text = State::<String>::from_request(&mut req).unwrap();
+        assert_eq!(*num, 42);
+        assert_eq!(*text, "hello");
+    }
+
+    #[test]
+    fn state_extractor_with_custom_struct() {
+        #[derive(Debug, Clone, PartialEq)]
+        struct DbPool {
+            url: String,
+        }
+        let mut req = crate::request::Request::test(Method::GET, "/");
+        req.provide_test_state(DbPool {
+            url: "postgres://localhost".into(),
+        });
+        let pool = State::<DbPool>::from_request(&mut req).unwrap();
+        assert_eq!(pool.url, "postgres://localhost");
     }
 }

@@ -29,12 +29,16 @@ use tokio::net::TcpListener;
 
 use crate::request::Request;
 use crate::router::Router;
+use crate::state::TypeMap;
 
-/// Start serving HTTP requests using the given router and listener.
+/// Start serving HTTP requests using the given router, listener, and
+/// application state.
 ///
 /// This is the core server loop. It accepts connections, routes requests,
 /// and sends responses. Each connection is handled in a separate Tokio task.
-pub(crate) async fn serve(router: Router, listener: TcpListener) {
+/// `state` is shared across every request and is what powers the
+/// [`State<T>`](crate::state::State) extractor.
+pub(crate) async fn serve(router: Router, listener: TcpListener, state: Arc<TypeMap>) {
     let router = Arc::new(router);
 
     loop {
@@ -44,15 +48,18 @@ pub(crate) async fn serve(router: Router, listener: TcpListener) {
         };
 
         let router = router.clone();
+        let state = state.clone();
         let io = TokioIo::new(stream);
 
         tokio::spawn(async move {
             let router = router.clone();
+            let state = state.clone();
 
             let service = service_fn(move |hyper_req: hyper::Request<hyper::body::Incoming>| {
                 let router = router.clone();
+                let state = state.clone();
                 async move {
-                    let response = handle_request(&router, hyper_req).await;
+                    let response = handle_request(&router, hyper_req, state).await;
                     Ok::<_, Infallible>(response)
                 }
             });
@@ -71,6 +78,7 @@ pub(crate) async fn serve(router: Router, listener: TcpListener) {
 async fn handle_request(
     router: &Router,
     hyper_req: hyper::Request<hyper::body::Incoming>,
+    state: Arc<TypeMap>,
 ) -> hyper::Response<Full<Bytes>> {
     let (parts, incoming) = hyper_req.into_parts();
     let path = parts.uri.path();
@@ -93,6 +101,7 @@ async fn handle_request(
                 parts.headers,
                 route_match.params,
                 body,
+                state,
             );
             let response = route_match.handler.call(request).await;
             response.into_hyper()
@@ -121,7 +130,8 @@ mod tests {
         let base_url = format!("http://{addr}");
 
         let handle = tokio::spawn(async move {
-            serve(app.into_router(), listener).await;
+            let (router, state) = app.into_parts();
+            serve(router, listener, Arc::new(state)).await;
         });
 
         // Give the server a moment to start accepting connections
@@ -437,6 +447,35 @@ mod tests {
     }
 
     #[cfg(feature = "json")]
+    #[tokio::test]
+    async fn state_extractor_works_over_http() {
+        use crate::state::State;
+
+        let app = App::new()
+            .provide(42_u32)
+            .get("/state", |db: State<u32>| format!("state: {}", *db));
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/state")).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "state: 42");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn missing_state_returns_500_over_http() {
+        use crate::state::State;
+
+        let app = App::new().get("/state", |db: State<u32>| format!("state: {}", *db));
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/state")).await.unwrap();
+        assert_eq!(resp.status(), 500);
+
+        handle.abort();
+    }
+
     #[tokio::test]
     async fn error_json_body_in_prod_mode() {
         use crate::error::Error;

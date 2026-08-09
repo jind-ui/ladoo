@@ -23,6 +23,7 @@ use tokio::net::TcpListener;
 
 use crate::handler::IntoHandler;
 use crate::router::Router;
+use crate::state::TypeMap;
 
 /// The application builder.
 ///
@@ -42,6 +43,7 @@ use crate::router::Router;
 /// ```
 pub struct App {
     router: Router,
+    state: TypeMap,
 }
 
 impl App {
@@ -49,7 +51,28 @@ impl App {
     pub fn new() -> Self {
         Self {
             router: Router::new(),
+            state: TypeMap::new(),
         }
+    }
+
+    /// Register a value for dependency injection.
+    ///
+    /// Any type that is `Send + Sync + 'static` can be provided. Extract
+    /// it in handlers with [`State<T>`](crate::state::State). Providing a
+    /// second value of the same type replaces the first.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ladoo::app::App;
+    ///
+    /// let _app = App::new()
+    ///     .provide(42_u32)
+    ///     .provide(String::from("hello"));
+    /// ```
+    pub fn provide<T: Send + Sync + 'static>(mut self, value: T) -> Self {
+        self.state.insert(value);
+        self
     }
 
     /// Register a handler for GET requests to the given path.
@@ -104,9 +127,20 @@ impl App {
 
     /// Consume the App and return the inner router.
     ///
-    /// Used internally by the server to access routes.
+    /// Used internally by tests to access routes without also needing
+    /// application state. Discards any state registered with
+    /// [`App::provide`] — use [`App::into_parts`] when state matters.
+    #[cfg(test)]
     pub(crate) fn into_router(self) -> Router {
         self.router
+    }
+
+    /// Consume the App and return the inner router and application state.
+    ///
+    /// Used internally by the server to access routes and dependency
+    /// injection state together.
+    pub(crate) fn into_parts(self) -> (Router, TypeMap) {
+        (self.router, self.state)
     }
 
     /// Start the HTTP server, blocking the current thread.
@@ -142,7 +176,8 @@ impl App {
                 .unwrap_or_else(|e| panic!("failed to bind to {addr}: {e}"));
 
             println!("Ladoo listening on http://{addr}");
-            crate::server::serve(self.into_router(), listener).await;
+            let (router, state) = self.into_parts();
+            crate::server::serve(router, listener, std::sync::Arc::new(state)).await;
         });
     }
 
@@ -167,7 +202,8 @@ impl App {
     /// }
     /// ```
     pub async fn serve_listener(self, listener: TcpListener) {
-        crate::server::serve(self.into_router(), listener).await;
+        let (router, state) = self.into_parts();
+        crate::server::serve(router, listener, std::sync::Arc::new(state)).await;
     }
 }
 
@@ -290,5 +326,39 @@ mod tests {
         let req = crate::request::Request::test(Method::GET, "/test");
         let resp = m.handler.call(req).await;
         assert_eq!(resp.body_bytes(), b"path: /test");
+    }
+
+    #[test]
+    fn provide_stores_state() {
+        let app = App::new().provide(42_u32);
+        // We can't directly access state, but we can verify it builds
+        let _ = app.into_router();
+    }
+
+    #[test]
+    fn provide_multiple_types() {
+        let app = App::new()
+            .provide(42_u32)
+            .provide(String::from("hello"))
+            .provide(3.14_f64);
+        let _ = app.into_router();
+    }
+
+    #[test]
+    fn provide_chains_with_routes() {
+        let app = App::new()
+            .provide(42_u32)
+            .get("/", |_req: Request| "hello")
+            .provide(String::from("world"));
+        let router = app.into_router();
+        assert!(router.find(&Method::GET, "/").is_some());
+    }
+
+    #[test]
+    fn into_parts_returns_router_and_state() {
+        let app = App::new().provide(42_u32).get("/", |_req: Request| "hi");
+        let (router, state) = app.into_parts();
+        assert!(router.find(&Method::GET, "/").is_some());
+        assert_eq!(state.get::<u32>(), Some(&42));
     }
 }
