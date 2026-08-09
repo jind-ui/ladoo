@@ -19,9 +19,12 @@
 //! # }
 //! ```
 
+use std::sync::Arc;
+
 use tokio::net::TcpListener;
 
 use crate::handler::IntoHandler;
+use crate::middleware::Middleware;
 use crate::router::Router;
 use crate::state::TypeMap;
 
@@ -44,6 +47,7 @@ use crate::state::TypeMap;
 pub struct App {
     router: Router,
     state: TypeMap,
+    global_middleware: Vec<Arc<dyn Middleware>>,
 }
 
 impl App {
@@ -52,7 +56,31 @@ impl App {
         Self {
             router: Router::new(),
             state: TypeMap::new(),
+            global_middleware: Vec::new(),
         }
+    }
+
+    /// Add a global middleware that runs on every matched route.
+    ///
+    /// Middleware are executed in the order they are registered (outer
+    /// to inner) — the first middleware registered is the outermost
+    /// layer, wrapping every middleware and handler registered after it.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ladoo::prelude::*;
+    ///
+    /// async fn logger(ctx: Context, next: Next) -> Result<Response> {
+    ///     let resp = next.run(ctx).await?;
+    ///     Ok(resp)
+    /// }
+    ///
+    /// App::new().use_mw(logger).get("/", handler);
+    /// ```
+    pub fn use_mw<M: Middleware + 'static>(mut self, middleware: M) -> Self {
+        self.global_middleware.push(Arc::new(middleware));
+        self
     }
 
     /// Register a value for dependency injection.
@@ -135,12 +163,13 @@ impl App {
         self.router
     }
 
-    /// Consume the App and return the inner router and application state.
+    /// Consume the App and return the inner router, application state, and
+    /// global middleware stack.
     ///
-    /// Used internally by the server to access routes and dependency
-    /// injection state together.
-    pub(crate) fn into_parts(self) -> (Router, TypeMap) {
-        (self.router, self.state)
+    /// Used internally by the server to access routes, dependency
+    /// injection state, and middleware together.
+    pub(crate) fn into_parts(self) -> (Router, TypeMap, Vec<Arc<dyn Middleware>>) {
+        (self.router, self.state, self.global_middleware)
     }
 
     /// Start the HTTP server, blocking the current thread.
@@ -176,8 +205,8 @@ impl App {
                 .unwrap_or_else(|e| panic!("failed to bind to {addr}: {e}"));
 
             println!("Ladoo listening on http://{addr}");
-            let (router, state) = self.into_parts();
-            crate::server::serve(router, listener, std::sync::Arc::new(state)).await;
+            let (router, state, middleware) = self.into_parts();
+            crate::server::serve(router, listener, std::sync::Arc::new(state), middleware).await;
         });
     }
 
@@ -202,8 +231,8 @@ impl App {
     /// }
     /// ```
     pub async fn serve_listener(self, listener: TcpListener) {
-        let (router, state) = self.into_parts();
-        crate::server::serve(router, listener, std::sync::Arc::new(state)).await;
+        let (router, state, middleware) = self.into_parts();
+        crate::server::serve(router, listener, std::sync::Arc::new(state), middleware).await;
     }
 }
 
@@ -357,8 +386,19 @@ mod tests {
     #[test]
     fn into_parts_returns_router_and_state() {
         let app = App::new().provide(42_u32).get("/", |_req: Request| "hi");
-        let (router, state) = app.into_parts();
+        let (router, state, _middleware) = app.into_parts();
         assert!(router.find(&Method::GET, "/").is_some());
         assert_eq!(state.get::<u32>(), Some(&42));
+    }
+
+    #[test]
+    fn use_mw_chains() {
+        async fn noop(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+            Ok(next.run(ctx).await?)
+        }
+        let app = App::new()
+            .use_mw(noop)
+            .get("/", |_req: Request| "hello");
+        let _ = app.into_parts();
     }
 }

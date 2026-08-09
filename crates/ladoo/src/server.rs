@@ -27,19 +27,27 @@ use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
+use crate::middleware::Middleware;
 use crate::request::Request;
 use crate::router::Router;
 use crate::state::TypeMap;
 
-/// Start serving HTTP requests using the given router, listener, and
-/// application state.
+/// Start serving HTTP requests using the given router, listener,
+/// application state, and global middleware stack.
 ///
 /// This is the core server loop. It accepts connections, routes requests,
 /// and sends responses. Each connection is handled in a separate Tokio task.
 /// `state` is shared across every request and is what powers the
-/// [`State<T>`](crate::state::State) extractor.
-pub(crate) async fn serve(router: Router, listener: TcpListener, state: Arc<TypeMap>) {
+/// [`State<T>`](crate::state::State) extractor. `global_middleware` runs on
+/// every matched route, ahead of any route-specific middleware.
+pub(crate) async fn serve(
+    router: Router,
+    listener: TcpListener,
+    state: Arc<TypeMap>,
+    global_middleware: Vec<Arc<dyn Middleware>>,
+) {
     let router = Arc::new(router);
+    let global_middleware: Arc<[Arc<dyn Middleware>]> = global_middleware.into();
 
     loop {
         let (stream, _addr) = match listener.accept().await {
@@ -49,17 +57,20 @@ pub(crate) async fn serve(router: Router, listener: TcpListener, state: Arc<Type
 
         let router = router.clone();
         let state = state.clone();
+        let global_mw = global_middleware.clone();
         let io = TokioIo::new(stream);
 
         tokio::spawn(async move {
             let router = router.clone();
             let state = state.clone();
+            let global_mw = global_mw.clone();
 
             let service = service_fn(move |hyper_req: hyper::Request<hyper::body::Incoming>| {
                 let router = router.clone();
                 let state = state.clone();
+                let global_mw = global_mw.clone();
                 async move {
-                    let response = handle_request(&router, hyper_req, state).await;
+                    let response = handle_request(&router, hyper_req, state, &global_mw).await;
                     Ok::<_, Infallible>(response)
                 }
             });
@@ -74,11 +85,13 @@ pub(crate) async fn serve(router: Router, listener: TcpListener, state: Arc<Type
     }
 }
 
-/// Route a hyper request through the router and call the matched handler.
+/// Route a hyper request through the router, run the combined middleware
+/// chain, and call the matched handler.
 async fn handle_request(
     router: &Router,
     hyper_req: hyper::Request<hyper::body::Incoming>,
     state: Arc<TypeMap>,
+    global_middleware: &[Arc<dyn Middleware>],
 ) -> hyper::Response<Full<Bytes>> {
     let (parts, incoming) = hyper_req.into_parts();
     let path = parts.uri.path();
@@ -103,8 +116,26 @@ async fn handle_request(
                 body,
                 state,
             );
-            let response = route_match.handler.call(request).await;
-            response.into_hyper()
+
+            let mut all_middleware: Vec<Arc<dyn Middleware>> = Vec::new();
+            all_middleware.extend_from_slice(global_middleware);
+            all_middleware.extend_from_slice(route_match.middleware);
+
+            let ctx = crate::context::Context::new(request);
+            let result = crate::middleware::run_middleware_chain(
+                &all_middleware,
+                route_match.handler,
+                ctx,
+            )
+            .await;
+
+            match result {
+                Ok(response) => response.into_hyper(),
+                Err(err) => {
+                    use crate::response::IntoResponse;
+                    err.into_response().into_hyper()
+                }
+            }
         }
         None => not_found_response(),
     }
@@ -130,8 +161,8 @@ mod tests {
         let base_url = format!("http://{addr}");
 
         let handle = tokio::spawn(async move {
-            let (router, state) = app.into_parts();
-            serve(router, listener, Arc::new(state)).await;
+            let (router, state, middleware) = app.into_parts();
+            serve(router, listener, Arc::new(state), middleware).await;
         });
 
         // Give the server a moment to start accepting connections
@@ -511,6 +542,84 @@ mod tests {
         let resp = reqwest::get(format!("{url}/greet")).await.unwrap();
         assert_eq!(resp.status(), 200);
         assert_eq!(resp.text().await.unwrap(), "Hey, world!");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn global_middleware_runs() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        static MW_RAN: AtomicBool = AtomicBool::new(false);
+
+        async fn test_mw(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+            MW_RAN.store(true, Ordering::SeqCst);
+            Ok(next.run(ctx).await?)
+        }
+
+        MW_RAN.store(false, Ordering::SeqCst);
+        let app = App::new()
+            .use_mw(test_mw)
+            .get("/", |_req: crate::request::Request| "hello");
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "hello");
+        assert!(MW_RAN.load(Ordering::SeqCst));
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn middleware_modifies_response() {
+        async fn add_header(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+            let mut resp = next.run(ctx).await?;
+            resp.set_header("X-Custom", "middleware");
+            Ok(resp)
+        }
+
+        let app = App::new()
+            .use_mw(add_header)
+            .get("/", |_req: crate::request::Request| "hello");
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            resp.headers().get("X-Custom").unwrap().to_str().unwrap(),
+            "middleware"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn middleware_short_circuits() {
+        async fn blocker(_ctx: crate::context::Context, _next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+            Err(crate::error::Error::unauthorized("no access"))
+        }
+
+        let app = App::new()
+            .use_mw(blocker)
+            .get("/", |_req: crate::request::Request| "unreachable");
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 401);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn no_middleware_works() {
+        let app = App::new()
+            .get("/", |_req: crate::request::Request| "no middleware");
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "no middleware");
 
         handle.abort();
     }

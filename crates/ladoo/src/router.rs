@@ -27,6 +27,7 @@ use std::sync::Arc;
 use http::Method;
 
 use crate::handler::Handler;
+use crate::middleware::Middleware;
 use crate::request::PathParams;
 
 #[cfg(test)]
@@ -162,12 +163,17 @@ mod tests {
     }
 }
 
-/// A matched route, containing the handler and extracted path parameters.
-pub struct RouteMatch {
+/// A matched route, containing the handler, extracted path parameters, and
+/// the route's own middleware stack.
+pub struct RouteMatch<'a> {
     /// The handler to call for this route.
     pub handler: Arc<dyn Handler>,
     /// Path parameters extracted during matching (e.g., `[("id", "42")]`).
     pub params: PathParams,
+    /// Middleware registered specifically for this route (e.g., via a
+    /// route group). Does not include global middleware — callers combine
+    /// the two.
+    pub middleware: &'a [Arc<dyn Middleware>],
 }
 
 /// A path segment pattern — either a literal string or a named parameter.
@@ -179,11 +185,12 @@ enum Segment {
     Param(String),
 }
 
-/// A registered route: method + path pattern + handler.
+/// A registered route: method + path pattern + handler + middleware.
 struct Route {
     method: Method,
     segments: Vec<Segment>,
     handler: Arc<dyn Handler>,
+    middleware: Vec<Arc<dyn Middleware>>,
 }
 
 /// Routes HTTP requests to handlers based on method and path pattern.
@@ -228,6 +235,29 @@ impl Router {
             method,
             segments,
             handler: Arc::from(handler),
+            middleware: Vec::new(),
+        });
+    }
+
+    /// Register a route along with middleware specific to it.
+    ///
+    /// Used internally by route groups, which attach a shared middleware
+    /// stack to every route registered within the group.
+    // Not yet called — route groups (a later task) are the intended caller.
+    #[allow(dead_code)]
+    pub(crate) fn add_with_middleware(
+        &mut self,
+        method: Method,
+        path: &str,
+        handler: Box<dyn Handler>,
+        middleware: Vec<Arc<dyn Middleware>>,
+    ) {
+        let segments = Self::parse_path(path);
+        self.routes.push(Route {
+            method,
+            segments,
+            handler: Arc::from(handler),
+            middleware,
         });
     }
 
@@ -235,7 +265,7 @@ impl Router {
     ///
     /// Returns `None` if no route matches. When multiple routes could match,
     /// routes with static segments are preferred over parameterized ones.
-    pub fn find(&self, method: &Method, path: &str) -> Option<RouteMatch> {
+    pub fn find(&self, method: &Method, path: &str) -> Option<RouteMatch<'_>> {
         let path_segments = Self::split_path(path);
 
         // Prefer static matches over param matches
@@ -260,6 +290,7 @@ impl Router {
         best_match.map(|(route, params)| RouteMatch {
             handler: route.handler.clone(),
             params,
+            middleware: &route.middleware,
         })
     }
 

@@ -78,9 +78,6 @@ pub struct Next {
 
 impl Next {
     /// Create a new `Next` from a middleware stack and handler.
-    // Not yet called from `server.rs` — the router doesn't attach
-    // per-route middleware until Task 3 wires `run_middleware_chain` in.
-    #[allow(dead_code)]
     pub(crate) fn new(
         middleware: Arc<[Arc<dyn Middleware>]>,
         handler: Arc<dyn Handler>,
@@ -123,9 +120,6 @@ impl Next {
 /// This is the internal entry point used by the server. `handler` is
 /// wrapped in an `Arc` by the caller (the router stores routes this way),
 /// so no unsafe lifetime tricks are needed to build the [`Next`] chain.
-// Not yet called from `server.rs` — wired in by Task 3 once routes carry
-// per-route middleware stacks.
-#[allow(dead_code)]
 pub(crate) async fn run_middleware_chain(
     middleware: &[Arc<dyn Middleware>],
     handler: Arc<dyn Handler>,
