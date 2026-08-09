@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use http::StatusCode;
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
@@ -72,14 +72,28 @@ async fn handle_request(
     router: &Router,
     hyper_req: hyper::Request<hyper::body::Incoming>,
 ) -> hyper::Response<Full<Bytes>> {
-    let method = hyper_req.method().clone();
-    let uri = hyper_req.uri().clone();
-    let headers = hyper_req.headers().clone();
-    let path = uri.path();
+    let (parts, incoming) = hyper_req.into_parts();
+    let path = parts.uri.path();
 
-    match router.find(&method, path) {
+    match router.find(&parts.method, path) {
         Some(route_match) => {
-            let request = Request::new(method, uri, headers, route_match.params);
+            let body = match incoming.collect().await {
+                Ok(collected) => collected.to_bytes(),
+                Err(_) => {
+                    return hyper::Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                        .body(Full::new(Bytes::from("Failed to read request body")))
+                        .unwrap();
+                }
+            };
+            let request = Request::new(
+                parts.method,
+                parts.uri,
+                parts.headers,
+                route_match.params,
+                body,
+            );
             let response = route_match.handler.call(request).await;
             response.into_hyper()
         }
@@ -214,6 +228,26 @@ mod tests {
             .to_str()
             .unwrap();
         assert_eq!(ct, "text/plain; charset=utf-8");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn handler_receives_request_body() {
+        let app = App::new().post("/echo", |req: crate::request::Request| {
+            String::from_utf8_lossy(req.body()).to_string()
+        });
+        let (url, handle) = start_test_server(app).await;
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{url}/echo"))
+            .body("hello body")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "hello body");
 
         handle.abort();
     }
