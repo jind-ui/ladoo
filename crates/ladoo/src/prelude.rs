@@ -24,4 +24,5 @@ pub use crate::extract::Query;
 pub use crate::handler::IntoHandler;
 pub use crate::request::Request;
 pub use crate::response::{Html, IntoResponse, Response};
+pub use crate::state::State;
 pub use http::StatusCode;

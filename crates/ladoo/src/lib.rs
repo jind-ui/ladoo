@@ -129,6 +129,24 @@
 //!     Err(UserError::DuplicateEmail)
 //! }
 //! ```
+//!
+//! ## State & Dependency Injection
+//!
+//! Register any `Send + Sync + 'static` value at startup and extract
+//! it in handlers with [`State<T>`](state::State):
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! App::new()
+//!     .provide(Database::connect(url).await?)
+//!     .provide(AppConfig::from_file("config.toml")?)
+//!     .get("/users/:id", |db: State<Database>, req: Request| {
+//!         let id = req.param("id").unwrap();
+//!         db.find_user(id)
+//!     })
+//!     .run("0.0.0.0:3000");
+//! ```
 
 pub mod app;
 pub mod error;

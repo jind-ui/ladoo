@@ -477,6 +477,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn state_extractor_over_http() {
+        let app = App::new()
+            .provide(42_u32)
+            .get("/num", |n: crate::state::State<u32>| format!("num: {}", *n));
+
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/num")).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "num: 42");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn multiple_state_types_over_http() {
+        let app = App::new().provide(42_u32).provide(String::from("hello")).get(
+            "/both",
+            |n: crate::state::State<u32>, s: crate::state::State<String>| {
+                format!("{}: {}", *s, *n)
+            },
+        );
+
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/both")).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "hello: 42");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn missing_state_returns_500() {
+        let app = App::new().get("/fail", |_n: crate::state::State<u32>| "unreachable");
+
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/fail")).await.unwrap();
+        assert_eq!(resp.status(), 500);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn state_with_custom_struct_over_http() {
+        #[derive(Clone)]
+        struct Config {
+            greeting: String,
+        }
+
+        let app = App::new()
+            .provide(Config {
+                greeting: "Hey".into(),
+            })
+            .get("/greet", |cfg: crate::state::State<Config>| {
+                format!("{}, world!", cfg.greeting)
+            });
+
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/greet")).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "Hey, world!");
+
+        handle.abort();
+    }
+
+    #[cfg(feature = "json")]
+    #[tokio::test]
     async fn error_json_body_in_prod_mode() {
         use crate::error::Error;
 
