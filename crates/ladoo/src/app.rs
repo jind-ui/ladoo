@@ -19,6 +19,8 @@
 //! # }
 //! ```
 
+use tokio::net::TcpListener;
+
 use crate::handler::IntoHandler;
 use crate::router::Router;
 
@@ -103,9 +105,69 @@ impl App {
     /// Consume the App and return the inner router.
     ///
     /// Used internally by the server to access routes.
-    #[allow(dead_code)]
     pub(crate) fn into_router(self) -> Router {
         self.router
+    }
+
+    /// Start the HTTP server, blocking the current thread.
+    ///
+    /// Creates a Tokio runtime internally — no `#[tokio::main]` needed.
+    /// This is the simplest way to start a Ladoo app.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use ladoo::prelude::*;
+    ///
+    /// fn main() {
+    ///     App::new()
+    ///         .get("/", |_| "Hello World")
+    ///         .run("0.0.0.0:3000");
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the Tokio runtime cannot be created or the address cannot be bound.
+    pub fn run(self, addr: &str) {
+        let rt = tokio::runtime::Runtime::new().expect("failed to create Tokio runtime");
+
+        let addr: std::net::SocketAddr = addr
+            .parse()
+            .expect("invalid address — expected format like 0.0.0.0:3000");
+
+        rt.block_on(async {
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
+                .unwrap_or_else(|e| panic!("failed to bind to {addr}: {e}"));
+
+            println!("Ladoo listening on http://{addr}");
+            crate::server::serve(self.into_router(), listener).await;
+        });
+    }
+
+    /// Start the HTTP server using a pre-bound listener.
+    ///
+    /// Useful for tests (bind to port 0 for a random port) and advanced
+    /// use cases where you manage the Tokio runtime yourself.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use ladoo::prelude::*;
+    /// use tokio::net::TcpListener;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    ///     App::new()
+    ///         .get("/", |_| "Hello World")
+    ///         .serve_listener(listener)
+    ///         .await;
+    /// }
+    /// ```
+    pub async fn serve_listener(self, listener: TcpListener) {
+        crate::server::serve(self.into_router(), listener).await;
     }
 }
 
