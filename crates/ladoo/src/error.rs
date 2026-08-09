@@ -627,6 +627,24 @@ mod tests {
     }
 
     #[test]
+    fn dev_html_escapes_message_and_detail() {
+        let _guard = lock_env();
+        std::env::remove_var("LADOO_ENV");
+        std::env::remove_var("APP_ENV");
+        let err = Error::internal("<script>alert(1)</script>")
+            .with_detail("detail with <b>html</b> & \"quotes\"");
+        let resp = err.into_response();
+        let body = std::str::from_utf8(resp.body_bytes()).unwrap();
+        // Must NOT contain raw HTML tags
+        assert!(!body.contains("<script>"));
+        assert!(!body.contains("<b>"));
+        // Must contain escaped versions
+        assert!(body.contains("&lt;script&gt;"));
+        assert!(body.contains("&amp;"));
+        assert!(body.contains("&quot;"));
+    }
+
+    #[test]
     fn dev_html_page_has_ladoo_footer() {
         let _guard = lock_env();
         std::env::remove_var("LADOO_ENV");
