@@ -53,29 +53,34 @@ impl TestClient {
         }
     }
 
+    /// Start building a request with an arbitrary HTTP method.
+    pub fn request(&self, method: Method, path: &str) -> TestRequest<'_> {
+        TestRequest::new(self, method, path)
+    }
+
     /// Start building a GET request.
     pub fn get(&self, path: &str) -> TestRequest<'_> {
-        TestRequest::new(self, Method::GET, path)
+        self.request(Method::GET, path)
     }
 
     /// Start building a POST request.
     pub fn post(&self, path: &str) -> TestRequest<'_> {
-        TestRequest::new(self, Method::POST, path)
+        self.request(Method::POST, path)
     }
 
     /// Start building a PUT request.
     pub fn put(&self, path: &str) -> TestRequest<'_> {
-        TestRequest::new(self, Method::PUT, path)
+        self.request(Method::PUT, path)
     }
 
     /// Start building a DELETE request.
     pub fn delete(&self, path: &str) -> TestRequest<'_> {
-        TestRequest::new(self, Method::DELETE, path)
+        self.request(Method::DELETE, path)
     }
 
     /// Start building a PATCH request.
     pub fn patch(&self, path: &str) -> TestRequest<'_> {
-        TestRequest::new(self, Method::PATCH, path)
+        self.request(Method::PATCH, path)
     }
 }
 
@@ -147,7 +152,10 @@ impl<'a> TestRequest<'a> {
     /// The request is routed through the app's middleware chain and
     /// handler in-memory — no TCP connection is opened.
     pub async fn send(self) -> TestResponse {
-        let uri: http::Uri = self.path.parse().expect("invalid test path");
+        let uri: http::Uri = self
+            .path
+            .parse()
+            .unwrap_or_else(|e| panic!("invalid test path {:?}: {e}", self.path));
         let request = crate::request::Request::new(
             self.method,
             uri,
@@ -258,7 +266,12 @@ impl TestServer {
             crate::server::serve(router, listener, Arc::new(state), global_middleware).await;
         });
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        loop {
+            match tokio::net::TcpStream::connect(&addr).await {
+                Ok(_) => break,
+                Err(_) => tokio::task::yield_now().await,
+            }
+        }
 
         Self {
             base_url,
@@ -267,29 +280,34 @@ impl TestServer {
         }
     }
 
+    /// Start building a request with an arbitrary HTTP method.
+    pub fn request(&self, method: Method, path: &str) -> ServerTestRequest<'_> {
+        ServerTestRequest::new(self, method, path)
+    }
+
     /// Start building a GET request.
     pub fn get(&self, path: &str) -> ServerTestRequest<'_> {
-        ServerTestRequest::new(self, Method::GET, path)
+        self.request(Method::GET, path)
     }
 
     /// Start building a POST request.
     pub fn post(&self, path: &str) -> ServerTestRequest<'_> {
-        ServerTestRequest::new(self, Method::POST, path)
+        self.request(Method::POST, path)
     }
 
     /// Start building a PUT request.
     pub fn put(&self, path: &str) -> ServerTestRequest<'_> {
-        ServerTestRequest::new(self, Method::PUT, path)
+        self.request(Method::PUT, path)
     }
 
     /// Start building a DELETE request.
     pub fn delete(&self, path: &str) -> ServerTestRequest<'_> {
-        ServerTestRequest::new(self, Method::DELETE, path)
+        self.request(Method::DELETE, path)
     }
 
     /// Start building a PATCH request.
     pub fn patch(&self, path: &str) -> ServerTestRequest<'_> {
-        ServerTestRequest::new(self, Method::PATCH, path)
+        self.request(Method::PATCH, path)
     }
 }
 
@@ -376,7 +394,7 @@ impl<'a> ServerTestRequest<'a> {
         let resp = req_builder.send().await.expect("test request failed");
         let status = resp.status();
         let headers = resp.headers().clone();
-        let body = Bytes::from(resp.bytes().await.expect("failed to read response body"));
+        let body = resp.bytes().await.expect("failed to read response body");
         TestResponse {
             status,
             headers,

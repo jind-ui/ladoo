@@ -243,6 +243,13 @@ impl App {
     /// The returned [`TestServer`](crate::testing::TestServer) sends
     /// requests over the network and stops the server when dropped.
     ///
+    /// Requires the `test-server` feature in downstream crates:
+    ///
+    /// ```toml
+    /// [dev-dependencies]
+    /// ladoo = { version = "0.1", features = ["test-server"] }
+    /// ```
+    ///
     /// # Examples
     ///
     /// ```rust,ignore

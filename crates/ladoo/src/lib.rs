@@ -207,7 +207,7 @@
 //! }
 //! ```
 //!
-//! For integration tests over real TCP:
+//! For integration tests over real TCP (requires `features = ["test-server"]`):
 //!
 //! ```rust,ignore
 //! #[tokio::test]
