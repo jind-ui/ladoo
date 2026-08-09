@@ -252,9 +252,10 @@ mod tests {
         handle.abort();
     }
 
+    #[cfg(feature = "json")]
     #[tokio::test]
     async fn query_extractor_over_http() {
-        use crate::extract::{FromRequest, Query};
+        use crate::extract::Query;
         use serde::Deserialize;
 
         #[derive(Deserialize)]
@@ -274,9 +275,10 @@ mod tests {
         handle.abort();
     }
 
+    #[cfg(feature = "json")]
     #[tokio::test]
     async fn json_extractor_over_http() {
-        use crate::extract::{FromRequest, Json};
+        use crate::extract::Json;
         use serde::{Deserialize, Serialize};
 
         #[derive(Deserialize)]
@@ -310,11 +312,13 @@ mod tests {
         handle.abort();
     }
 
+    #[cfg(feature = "json")]
     #[tokio::test]
     async fn json_bad_content_type_returns_415() {
-        use crate::extract::{FromRequest, Json};
+        use crate::extract::Json;
         use serde::Deserialize;
 
+        #[allow(dead_code)]
         #[derive(Deserialize)]
         struct Data {
             value: String,
@@ -335,11 +339,13 @@ mod tests {
         handle.abort();
     }
 
+    #[cfg(feature = "json")]
     #[tokio::test]
     async fn json_invalid_body_returns_400() {
-        use crate::extract::{FromRequest, Json};
+        use crate::extract::Json;
         use serde::Deserialize;
 
+        #[allow(dead_code)]
         #[derive(Deserialize)]
         struct Data {
             value: i32,

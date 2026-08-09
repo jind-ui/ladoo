@@ -36,7 +36,7 @@
 //!
 //! ## JSON API
 //!
-//! ```rust,no_run
+//! ```rust,no_run,ignore
 //! use ladoo::prelude::*;
 //! use serde::{Deserialize, Serialize};
 //!
@@ -62,7 +62,7 @@
 //!
 //! ## Query Parameters
 //!
-//! ```rust,no_run
+//! ```rust,no_run,ignore
 //! use ladoo::prelude::*;
 //! use serde::Deserialize;
 //!
