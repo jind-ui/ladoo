@@ -646,4 +646,52 @@ mod tests {
 
         handle.abort();
     }
+
+    #[tokio::test]
+    async fn group_with_middleware_over_http() {
+        async fn add_header(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+            let mut resp = next.run(ctx).await?;
+            resp.set_header("X-Group", "admin");
+            Ok(resp)
+        }
+
+        let app = App::new()
+            .get("/public", |_req: crate::request::Request| "public")
+            .group("/admin", |r| {
+                r.use_mw(add_header)
+                    .get("/dashboard", |_req: crate::request::Request| "dashboard")
+            });
+        let (url, handle) = start_test_server(app).await;
+
+        // Public route — no group middleware
+        let public_resp = reqwest::get(format!("{url}/public")).await.unwrap();
+        assert!(public_resp.headers().get("X-Group").is_none());
+        assert_eq!(public_resp.text().await.unwrap(), "public");
+
+        // Admin route — group middleware adds header
+        let resp = reqwest::get(format!("{url}/admin/dashboard")).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            resp.headers().get("X-Group").unwrap().to_str().unwrap(),
+            "admin"
+        );
+        assert_eq!(resp.text().await.unwrap(), "dashboard");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn mounted_router_over_http() {
+        let api = crate::router::Router::new()
+            .get("/items", |_req: crate::request::Request| "items list");
+
+        let app = App::new().mount("/api", api);
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/api/items")).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "items list");
+
+        handle.abort();
+    }
 }

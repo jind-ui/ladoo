@@ -153,6 +153,50 @@ impl App {
         self
     }
 
+    /// Create a group of routes under a shared prefix.
+    ///
+    /// Routes added inside the closure are prefixed with the given path.
+    /// Middleware added via `use_mw()` on the group's router applies only
+    /// to routes in that group.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// App::new()
+    ///     .group("/api/v1", |r| {
+    ///         r.get("/users", list_users)
+    ///          .post("/users", create_user)
+    ///          .use_mw(auth)
+    ///     })
+    /// ```
+    pub fn group<F>(mut self, prefix: &str, builder: F) -> Self
+    where
+        F: FnOnce(Router) -> Router,
+    {
+        let sub_router = builder(Router::new());
+        self.router.merge_from(prefix, sub_router);
+        self
+    }
+
+    /// Mount a standalone router under a prefix.
+    ///
+    /// All routes from the given router are added with the prefix
+    /// prepended. Per-route middleware on the mounted router is preserved.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let api = Router::new()
+    ///     .get("/items", list_items)
+    ///     .post("/items", create_item);
+    ///
+    /// App::new().mount("/api", api);
+    /// ```
+    pub fn mount(mut self, prefix: &str, router: Router) -> Self {
+        self.router.merge_from(prefix, router);
+        self
+    }
+
     /// Consume the App and return the inner router.
     ///
     /// Used internally by tests to access routes without also needing
@@ -400,5 +444,24 @@ mod tests {
             .use_mw(noop)
             .get("/", |_req: Request| "hello");
         let _ = app.into_parts();
+    }
+
+    #[test]
+    fn group_adds_prefixed_routes() {
+        let app = App::new().group("/api", |r| {
+            r.get("/users", |_req: Request| "users")
+                .post("/users", |_req: Request| "created")
+        });
+        let (router, _, _) = app.into_parts();
+        assert!(router.find(&Method::GET, "/api/users").is_some());
+        assert!(router.find(&Method::POST, "/api/users").is_some());
+    }
+
+    #[test]
+    fn mount_adds_prefixed_routes() {
+        let api = Router::new().get("/items", |_req: Request| "items");
+        let app = App::new().mount("/api", api);
+        let (router, _, _) = app.into_parts();
+        assert!(router.find(&Method::GET, "/api/items").is_some());
     }
 }

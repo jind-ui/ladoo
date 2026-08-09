@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use http::Method;
 
-use crate::handler::Handler;
+use crate::handler::{Handler, IntoHandler};
 use crate::middleware::Middleware;
 use crate::request::PathParams;
 
@@ -39,6 +39,10 @@ mod tests {
 
     fn dummy_handler() -> Box<dyn Handler> {
         (|_req: Request| "ok").into_handler()
+    }
+
+    fn dummy_handler_fn(_req: Request) -> &'static str {
+        "ok"
     }
 
     #[test]
@@ -161,6 +165,47 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.body_bytes(), b"Hello!");
     }
+
+    #[test]
+    fn get_convenience_method() {
+        let router = Router::new().get("/", dummy_handler_fn);
+        assert!(router.find(&Method::GET, "/").is_some());
+    }
+
+    #[test]
+    fn post_convenience_method() {
+        let router = Router::new().post("/users", dummy_handler_fn);
+        assert!(router.find(&Method::POST, "/users").is_some());
+    }
+
+    #[test]
+    fn put_convenience_method() {
+        let router = Router::new().put("/users/:id", dummy_handler_fn);
+        assert!(router.find(&Method::PUT, "/users/1").is_some());
+    }
+
+    #[test]
+    fn delete_convenience_method() {
+        let router = Router::new().delete("/users/:id", dummy_handler_fn);
+        assert!(router.find(&Method::DELETE, "/users/1").is_some());
+    }
+
+    #[test]
+    fn patch_convenience_method() {
+        let router = Router::new().patch("/users/:id", dummy_handler_fn);
+        assert!(router.find(&Method::PATCH, "/users/1").is_some());
+    }
+
+    #[test]
+    fn merge_from_adds_prefixed_routes() {
+        let sub = Router::new()
+            .get("/", dummy_handler_fn)
+            .get("/:id", dummy_handler_fn);
+        let mut main = Router::new();
+        main.merge_from("/users", sub);
+        assert!(main.find(&Method::GET, "/users").is_some());
+        assert!(main.find(&Method::GET, "/users/42").is_some());
+    }
 }
 
 /// A matched route, containing the handler, extracted path parameters, and
@@ -217,12 +262,16 @@ struct Route {
 /// ```
 pub struct Router {
     routes: Vec<Route>,
+    group_middleware: Vec<Arc<dyn Middleware>>,
 }
 
 impl Router {
     /// Create an empty router with no routes.
     pub fn new() -> Self {
-        Self { routes: Vec::new() }
+        Self {
+            routes: Vec::new(),
+            group_middleware: Vec::new(),
+        }
     }
 
     /// Register a route with the given HTTP method, path pattern, and handler.
@@ -343,6 +392,110 @@ impl Router {
         }
 
         Some((params, static_count))
+    }
+
+    /// Register a handler for GET requests.
+    pub fn get<H, M>(mut self, path: &str, handler: H) -> Self
+    where
+        H: IntoHandler<M>,
+    {
+        self.add(Method::GET, path, handler.into_handler());
+        self
+    }
+
+    /// Register a handler for POST requests.
+    pub fn post<H, M>(mut self, path: &str, handler: H) -> Self
+    where
+        H: IntoHandler<M>,
+    {
+        self.add(Method::POST, path, handler.into_handler());
+        self
+    }
+
+    /// Register a handler for PUT requests.
+    pub fn put<H, M>(mut self, path: &str, handler: H) -> Self
+    where
+        H: IntoHandler<M>,
+    {
+        self.add(Method::PUT, path, handler.into_handler());
+        self
+    }
+
+    /// Register a handler for DELETE requests.
+    pub fn delete<H, M>(mut self, path: &str, handler: H) -> Self
+    where
+        H: IntoHandler<M>,
+    {
+        self.add(Method::DELETE, path, handler.into_handler());
+        self
+    }
+
+    /// Register a handler for PATCH requests.
+    pub fn patch<H, M>(mut self, path: &str, handler: H) -> Self
+    where
+        H: IntoHandler<M>,
+    {
+        self.add(Method::PATCH, path, handler.into_handler());
+        self
+    }
+
+    /// Add middleware to every route in this router.
+    ///
+    /// Applies to all routes registered on this router, whether they were
+    /// added before or after this call — this is what lets a route group
+    /// declare its middleware and its routes in any order:
+    ///
+    /// ```rust,ignore
+    /// Router::new()
+    ///     .use_mw(auth)
+    ///     .get("/dashboard", handler)
+    ///     .get("/settings", handler)
+    /// ```
+    ///
+    /// The middleware is resolved when this router is merged into a parent
+    /// (via [`App::group`](crate::app::App::group) or
+    /// [`App::mount`](crate::app::App::mount)).
+    pub fn use_mw<MW: Middleware + 'static>(mut self, mw: MW) -> Self {
+        self.group_middleware.push(Arc::new(mw));
+        self
+    }
+
+    /// Merge another router's routes into this one, prepending a prefix.
+    ///
+    /// Each route's path segments are reconstructed with the prefix
+    /// prepended and re-parsed, so parameter segments (`:id`) are
+    /// preserved. Per-route middleware and any router-wide middleware
+    /// added via [`Router::use_mw`] on `other` are both carried over.
+    pub fn merge_from(&mut self, prefix: &str, other: Router) {
+        let group_middleware = other.group_middleware;
+        for route in other.routes {
+            let prefixed_path = format_prefixed_path(prefix, &route.segments);
+            let mut middleware = route.middleware;
+            middleware.extend(group_middleware.iter().cloned());
+            self.routes.push(Route {
+                method: route.method,
+                segments: Self::parse_path(&prefixed_path),
+                handler: route.handler,
+                middleware,
+            });
+        }
+    }
+}
+
+/// Reconstruct a path string from parsed segments, prefixed with `prefix`.
+fn format_prefixed_path(prefix: &str, segments: &[Segment]) -> String {
+    let suffix: String = segments
+        .iter()
+        .map(|s| match s {
+            Segment::Static(v) => format!("/{v}"),
+            Segment::Param(v) => format!("/:{v}"),
+        })
+        .collect();
+    let prefix = prefix.trim_end_matches('/');
+    if suffix.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}{suffix}")
     }
 }
 
