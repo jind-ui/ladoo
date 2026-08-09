@@ -12,6 +12,7 @@ categories = ["web-programming::http-server"]
 default = ["json", "macros"]
 json = ["dep:serde", "dep:serde_json", "dep:serde_urlencoded"]
 macros = ["dep:ladoo-macros"]
+test-server = ["dep:reqwest"]
 
 [dependencies]
 bytes = "1"
@@ -23,6 +24,7 @@ ladoo-macros = { path = "../ladoo-macros", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 serde_urlencoded = { version = "0.7", optional = true }
+reqwest = { version = "0.12", features = ["json"], optional = true }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net"] }
 
 [dev-dependencies]

@@ -177,7 +177,7 @@ pub struct TestResponse {
 }
 
 impl TestResponse {
-    fn new(response: crate::response::Response) -> Self {
+    pub(crate) fn new(response: crate::response::Response) -> Self {
         Self {
             status: response.status(),
             headers: response.headers().clone(),
@@ -225,9 +225,168 @@ impl TestResponse {
     }
 }
 
+#[cfg(any(test, feature = "test-server"))]
+/// A test server running on a real TCP port.
+///
+/// Created by [`App::spawn`](crate::app::App::spawn). Starts a real
+/// Hyper server on a random port. Requests go over TCP through the
+/// full network stack — useful for integration tests that need to
+/// exercise real HTTP behavior.
+///
+/// The server is stopped automatically when the `TestServer` is dropped.
+pub struct TestServer {
+    base_url: String,
+    client: reqwest::Client,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+#[cfg(any(test, feature = "test-server"))]
+impl TestServer {
+    /// Create and start a test server from app parts.
+    pub(crate) async fn start(
+        router: Router,
+        state: TypeMap,
+        global_middleware: Vec<Arc<dyn Middleware>>,
+    ) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("failed to bind test server");
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+
+        let handle = tokio::spawn(async move {
+            crate::server::serve(router, listener, Arc::new(state), global_middleware).await;
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        Self {
+            base_url,
+            client: reqwest::Client::new(),
+            handle,
+        }
+    }
+
+    /// Start building a GET request.
+    pub fn get(&self, path: &str) -> ServerTestRequest<'_> {
+        ServerTestRequest::new(self, Method::GET, path)
+    }
+
+    /// Start building a POST request.
+    pub fn post(&self, path: &str) -> ServerTestRequest<'_> {
+        ServerTestRequest::new(self, Method::POST, path)
+    }
+
+    /// Start building a PUT request.
+    pub fn put(&self, path: &str) -> ServerTestRequest<'_> {
+        ServerTestRequest::new(self, Method::PUT, path)
+    }
+
+    /// Start building a DELETE request.
+    pub fn delete(&self, path: &str) -> ServerTestRequest<'_> {
+        ServerTestRequest::new(self, Method::DELETE, path)
+    }
+
+    /// Start building a PATCH request.
+    pub fn patch(&self, path: &str) -> ServerTestRequest<'_> {
+        ServerTestRequest::new(self, Method::PATCH, path)
+    }
+}
+
+#[cfg(any(test, feature = "test-server"))]
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+#[cfg(any(test, feature = "test-server"))]
+/// A request builder for the test server (real TCP).
+///
+/// Build up a request with headers, body, and query parameters, then
+/// call [`send`](ServerTestRequest::send) to execute it over the network.
+pub struct ServerTestRequest<'a> {
+    server: &'a TestServer,
+    method: Method,
+    path: String,
+    headers: HeaderMap,
+    body: Bytes,
+}
+
+#[cfg(any(test, feature = "test-server"))]
+impl<'a> ServerTestRequest<'a> {
+    fn new(server: &'a TestServer, method: Method, path: &str) -> Self {
+        Self {
+            server,
+            method,
+            path: path.to_string(),
+            headers: HeaderMap::new(),
+            body: Bytes::new(),
+        }
+    }
+
+    /// Add a header to the request.
+    pub fn header(mut self, name: &str, value: &str) -> Self {
+        self.headers.insert(
+            http::header::HeaderName::from_bytes(name.as_bytes()).expect("invalid header name"),
+            http::header::HeaderValue::from_str(value).expect("invalid header value"),
+        );
+        self
+    }
+
+    /// Set the request body as raw bytes.
+    pub fn body(mut self, body: &[u8]) -> Self {
+        self.body = Bytes::copy_from_slice(body);
+        self
+    }
+
+    /// Serialize `value` as JSON and set it as the request body.
+    #[cfg(feature = "json")]
+    pub fn json<T: serde::Serialize>(mut self, value: &T) -> Self {
+        self.body = Bytes::from(serde_json::to_vec(value).expect("failed to serialize JSON"));
+        self.headers.insert(
+            http::header::CONTENT_TYPE,
+            http::header::HeaderValue::from_static("application/json"),
+        );
+        self
+    }
+
+    /// Serialize `params` as a URL query string and append it to the path.
+    #[cfg(feature = "json")]
+    pub fn query<T: serde::Serialize>(mut self, params: &T) -> Self {
+        let qs = serde_urlencoded::to_string(params).expect("failed to serialize query");
+        if self.path.contains('?') {
+            self.path = format!("{}&{qs}", self.path);
+        } else {
+            self.path = format!("{}?{qs}", self.path);
+        }
+        self
+    }
+
+    /// Send the request over TCP and return the response.
+    pub async fn send(self) -> TestResponse {
+        let url = format!("{}{}", self.server.base_url, self.path);
+        let mut req_builder = self.server.client.request(self.method, &url);
+        for (name, value) in &self.headers {
+            req_builder = req_builder.header(name, value);
+        }
+        if !self.body.is_empty() {
+            req_builder = req_builder.body(self.body.to_vec());
+        }
+        let resp = req_builder.send().await.expect("test request failed");
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let body = Bytes::from(resp.bytes().await.expect("failed to read response body"));
+        TestResponse {
+            status,
+            headers,
+            body,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::app::App;
     use crate::request::Request;
     use http::StatusCode;
@@ -422,5 +581,97 @@ mod tests {
             .into_client();
         let resp = client.get("/").send().await;
         assert_eq!(resp.body_bytes(), b"raw");
+    }
+
+    // --- TestServer (real TCP) tests ---
+
+    #[tokio::test]
+    async fn spawn_serves_over_tcp() {
+        let server = App::test()
+            .get("/hello", |_req: Request| "world")
+            .spawn()
+            .await;
+        let resp = server.get("/hello").send().await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.text(), "world");
+    }
+
+    #[tokio::test]
+    async fn spawn_post_with_body() {
+        let server = App::test()
+            .post("/echo", |req: Request| {
+                String::from_utf8_lossy(req.body()).to_string()
+            })
+            .spawn()
+            .await;
+        let resp = server.post("/echo").body(b"hello tcp").send().await;
+        assert_eq!(resp.text(), "hello tcp");
+    }
+
+    #[tokio::test]
+    async fn spawn_404() {
+        let server = App::test()
+            .get("/", |_req: Request| "home")
+            .spawn()
+            .await;
+        let resp = server.get("/missing").send().await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn spawn_with_middleware() {
+        async fn tag(
+            ctx: crate::context::Context,
+            next: crate::middleware::Next,
+        ) -> crate::error::Result<crate::response::Response> {
+            let mut resp = next.run(ctx).await?;
+            resp.set_header("X-Spawned", "yes");
+            Ok(resp)
+        }
+        let server = App::test()
+            .use_mw(tag)
+            .get("/", |_req: Request| "ok")
+            .spawn()
+            .await;
+        let resp = server.get("/").send().await;
+        assert_eq!(resp.header("X-Spawned"), Some("yes"));
+    }
+
+    #[tokio::test]
+    async fn spawn_with_state() {
+        let server = App::test()
+            .provide(99_u32)
+            .get("/num", |n: crate::state::State<u32>| format!("{}", *n))
+            .spawn()
+            .await;
+        let resp = server.get("/num").send().await;
+        assert_eq!(resp.text(), "99");
+    }
+
+    #[cfg(feature = "json")]
+    #[tokio::test]
+    async fn spawn_json_roundtrip() {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Serialize, Deserialize, Debug, Clone)]
+        struct Item {
+            name: String,
+        }
+
+        let server = App::test()
+            .post("/item", |body: crate::extract::Json<Item>| {
+                crate::extract::Json(body.0)
+            })
+            .spawn()
+            .await;
+        let resp = server
+            .post("/item")
+            .json(&Item {
+                name: "tcp-test".into(),
+            })
+            .send()
+            .await;
+        let item: Item = resp.json();
+        assert_eq!(item.name, "tcp-test");
     }
 }

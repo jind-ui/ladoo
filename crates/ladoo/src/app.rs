@@ -238,6 +238,33 @@ impl App {
         crate::testing::TestClient::new(router, state, middleware)
     }
 
+    /// Start a real TCP server on a random port for integration testing.
+    ///
+    /// The returned [`TestServer`](crate::testing::TestServer) sends
+    /// requests over the network and stops the server when dropped.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ladoo::prelude::*;
+    ///
+    /// #[tokio::test]
+    /// async fn integration() {
+    ///     let server = App::test()
+    ///         .get("/", |_: Request| "hello")
+    ///         .spawn()
+    ///         .await;
+    ///
+    ///     let resp = server.get("/").send().await;
+    ///     assert_eq!(resp.text(), "hello");
+    /// }
+    /// ```
+    #[cfg(any(test, feature = "test-server"))]
+    pub async fn spawn(self) -> crate::testing::TestServer {
+        let (router, state, middleware) = self.into_parts();
+        crate::testing::TestServer::start(router, state, middleware).await
+    }
+
     /// Consume the App and return the inner router.
     ///
     /// Used internally by tests to access routes without also needing
