@@ -94,28 +94,51 @@ async fn handle_request(
     global_middleware: &[Arc<dyn Middleware>],
 ) -> hyper::Response<Full<Bytes>> {
     let (parts, incoming) = hyper_req.into_parts();
-    let path = parts.uri.path();
 
-    match router.find(&parts.method, path) {
+    let body = match incoming.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(_) => {
+            return hyper::Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .body(Full::new(Bytes::from("Failed to read request body")))
+                .unwrap();
+        }
+    };
+
+    let request = Request::new(
+        parts.method,
+        parts.uri,
+        parts.headers,
+        Vec::new(), // params are set inside handle_app_request
+        body,
+        state,
+    );
+
+    handle_app_request(router, request, global_middleware)
+        .await
+        .into_hyper()
+}
+
+/// Route a request through the router and middleware chain, returning
+/// a framework [`Response`](crate::response::Response).
+///
+/// This is the core routing logic shared by both the TCP server path
+/// and the in-memory `TestClient` (added in a later phase). The TCP
+/// path converts from hyper types before calling this function and
+/// converts back after.
+pub(crate) async fn handle_app_request(
+    router: &Router,
+    request: Request,
+    global_middleware: &[Arc<dyn Middleware>],
+) -> crate::response::Response {
+    let method = request.method().clone();
+    let path = request.path().to_string();
+
+    match router.find(&method, &path) {
         Some(route_match) => {
-            let body = match incoming.collect().await {
-                Ok(collected) => collected.to_bytes(),
-                Err(_) => {
-                    return hyper::Response::builder()
-                        .status(StatusCode::BAD_REQUEST)
-                        .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
-                        .body(Full::new(Bytes::from("Failed to read request body")))
-                        .unwrap();
-                }
-            };
-            let request = Request::new(
-                parts.method,
-                parts.uri,
-                parts.headers,
-                route_match.params,
-                body,
-                state,
-            );
+            let mut request = request;
+            request.set_params(route_match.params);
 
             let mut all_middleware: Vec<Arc<dyn Middleware>> = Vec::new();
             all_middleware.extend_from_slice(global_middleware);
@@ -130,29 +153,94 @@ async fn handle_request(
             .await;
 
             match result {
-                Ok(response) => response.into_hyper(),
+                Ok(response) => response,
                 Err(err) => {
                     use crate::response::IntoResponse;
-                    err.into_response().into_hyper()
+                    err.into_response()
                 }
             }
         }
-        None => not_found_response(),
+        None => {
+            use crate::response::IntoResponse;
+            crate::error::Error::not_found("Not Found").into_response()
+        }
     }
-}
-
-fn not_found_response() -> hyper::Response<Full<Bytes>> {
-    hyper::Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(Full::new(Bytes::from("Not Found")))
-        .unwrap()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::App;
+    use crate::handler::IntoHandler;
+
+    #[tokio::test]
+    async fn handle_app_request_routes_correctly() {
+        let mut router = Router::new();
+        router.add(
+            http::Method::GET,
+            "/hello",
+            (|_req: crate::request::Request| "world").into_handler(),
+        );
+        let state = Arc::new(TypeMap::new());
+        let req = crate::request::Request::new(
+            http::Method::GET,
+            "/hello".parse().unwrap(),
+            http::HeaderMap::new(),
+            Vec::new(),
+            bytes::Bytes::new(),
+            state.clone(),
+        );
+        let resp = handle_app_request(&router, req, &[]).await;
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        assert_eq!(resp.body_bytes(), b"world");
+    }
+
+    #[tokio::test]
+    async fn handle_app_request_returns_404() {
+        let router = Router::new();
+        let state = Arc::new(TypeMap::new());
+        let req = crate::request::Request::new(
+            http::Method::GET,
+            "/missing".parse().unwrap(),
+            http::HeaderMap::new(),
+            Vec::new(),
+            bytes::Bytes::new(),
+            state.clone(),
+        );
+        let resp = handle_app_request(&router, req, &[]).await;
+        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn handle_app_request_runs_middleware() {
+        async fn tag(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+            let mut resp = next.run(ctx).await?;
+            resp.set_header("X-Tag", "tested");
+            Ok(resp)
+        }
+        let mut router = Router::new();
+        router.add(
+            http::Method::GET,
+            "/",
+            (|_req: crate::request::Request| "ok").into_handler(),
+        );
+        let mw: Vec<Arc<dyn crate::middleware::Middleware>> = vec![Arc::new(tag)];
+        let state = Arc::new(TypeMap::new());
+        let req = crate::request::Request::new(
+            http::Method::GET,
+            "/".parse().unwrap(),
+            http::HeaderMap::new(),
+            Vec::new(),
+            bytes::Bytes::new(),
+            state.clone(),
+        );
+        let resp = handle_app_request(&router, req, &mw).await;
+        assert_eq!(resp.body_bytes(), b"ok");
+        assert_eq!(
+            resp.headers().get("X-Tag").unwrap().to_str().unwrap(),
+            "tested"
+        );
+    }
 
     /// Helper: start an app on a random port, return the base URL and abort handle.
     async fn start_test_server(app: App) -> (String, tokio::task::JoinHandle<()>) {
@@ -185,12 +273,16 @@ mod tests {
 
     #[tokio::test]
     async fn returns_404_for_unmatched_route() {
+        // Unmatched routes now render through the same `Error::into_response`
+        // path as every other error (see `handle_app_request`), so in dev
+        // mode the body is the dev HTML error page rather than plain text.
         let app = App::new().get("/", |_req: crate::request::Request| "home");
         let (url, handle) = start_test_server(app).await;
 
         let resp = reqwest::get(format!("{url}/nonexistent")).await.unwrap();
         assert_eq!(resp.status(), 404);
-        assert_eq!(resp.text().await.unwrap(), "Not Found");
+        let body = resp.text().await.unwrap();
+        assert!(body.contains("Not Found"), "expected 'Not Found' in {body}");
 
         handle.abort();
     }

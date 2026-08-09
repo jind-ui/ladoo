@@ -197,6 +197,24 @@ impl App {
         self
     }
 
+    /// Create a new application for testing.
+    ///
+    /// This is identical to [`App::new()`] — it exists to signal intent
+    /// and read clearly in test code. The returned `App` supports all the
+    /// same builder methods.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ladoo::app::App;
+    /// use ladoo::request::Request;
+    ///
+    /// let _app = App::test().get("/", |_: Request| "hello");
+    /// ```
+    pub fn test() -> Self {
+        Self::new()
+    }
+
     /// Consume the App and return the inner router.
     ///
     /// Used internally by tests to access routes without also needing
