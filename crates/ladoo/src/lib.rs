@@ -90,3 +90,9 @@ pub mod request;
 pub mod response;
 pub mod router;
 pub(crate) mod server;
+
+/// Derive `Display` and `IntoResponse` for custom error enums.
+///
+/// See [`ladoo_macros::AppError`] for the attribute syntax.
+#[cfg(feature = "macros")]
+pub use ladoo_macros::AppError;

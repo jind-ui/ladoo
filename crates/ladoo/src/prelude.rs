@@ -13,6 +13,8 @@
 //! ```
 
 pub use crate::app::App;
+#[cfg(feature = "macros")]
+pub use crate::AppError;
 pub use crate::extract::FromRequest;
 #[cfg(feature = "json")]
 pub use crate::extract::Json;
