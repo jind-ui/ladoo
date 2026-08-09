@@ -60,8 +60,6 @@ impl Response {
     /// Consume this response and return the equivalent hyper response.
     ///
     /// Used internally when sending the response to the client.
-    // Not yet called: the server that wires this in lands in a later task.
-    #[allow(dead_code)]
     pub(crate) fn into_hyper(self) -> hyper::Response<Full<Bytes>> {
         let mut builder = hyper::Response::builder().status(self.status);
         if let Some(headers) = builder.headers_mut() {

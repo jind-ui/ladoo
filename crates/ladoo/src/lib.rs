@@ -9,12 +9,27 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use ladoo::prelude::*;
 //!
 //! fn main() {
 //!     App::new()
 //!         .get("/", |_| "Hello World")
+//!         .run("0.0.0.0:3000");
+//! }
+//! ```
+//!
+//! ## Path Parameters
+//!
+//! ```rust,no_run
+//! use ladoo::prelude::*;
+//!
+//! fn main() {
+//!     App::new()
+//!         .get("/users/:id", |req: Request| {
+//!             let id = req.param("id").unwrap_or("0");
+//!             format!("User {id}")
+//!         })
 //!         .run("0.0.0.0:3000");
 //! }
 //! ```
@@ -25,4 +40,4 @@ pub mod prelude;
 pub mod request;
 pub mod response;
 pub mod router;
-pub mod server;
+pub(crate) mod server;
