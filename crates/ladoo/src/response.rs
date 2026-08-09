@@ -22,6 +22,7 @@ use http_body_util::Full;
 ///
 /// Stores the status, headers, and body separately, and is reconstructed
 /// into a [`hyper::Response`] internally when sent to the client.
+#[derive(Debug)]
 pub struct Response {
     status: StatusCode,
     headers: http::HeaderMap,

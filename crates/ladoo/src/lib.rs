@@ -35,6 +35,7 @@
 //! ```
 
 pub mod app;
+pub mod extract;
 pub mod handler;
 pub mod prelude;
 pub mod request;
