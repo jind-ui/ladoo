@@ -58,6 +58,12 @@ pub trait FromRequest: Sized {
     fn from_request(req: &mut Request) -> Result<Self, Response>;
 }
 
+#[cfg(feature = "json")]
+mod query;
+
+#[cfg(feature = "json")]
+pub use query::Query;
+
 #[cfg(test)]
 mod tests {
     use super::*;
