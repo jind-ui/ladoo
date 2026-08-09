@@ -51,6 +51,11 @@ impl Response {
         &self.body
     }
 
+    /// Returns the response headers.
+    pub fn headers(&self) -> &http::HeaderMap {
+        &self.headers
+    }
+
     /// Returns the Content-Type header value, if present.
     pub fn content_type(&self) -> Option<&str> {
         self.headers
@@ -62,6 +67,22 @@ impl Response {
     pub(crate) fn with_status(mut self, status: StatusCode) -> Self {
         self.status = status;
         self
+    }
+
+    /// Set a response header, replacing any existing value.
+    ///
+    /// Useful in middleware to add or modify response headers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` is not a valid header name or `value` is not a
+    /// valid header value.
+    pub fn set_header(&mut self, name: &str, value: &str) {
+        self.headers.insert(
+            http::header::HeaderName::from_bytes(name.as_bytes())
+                .expect("invalid header name"),
+            http::header::HeaderValue::from_str(value).expect("invalid header value"),
+        );
     }
 
     /// Consume this response and return the equivalent hyper response.
@@ -268,5 +289,28 @@ mod tests {
         let resp = (StatusCode::OK, Html("<h1>Hi</h1>".to_string())).into_response();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.content_type(), Some("text/html; charset=utf-8"));
+    }
+
+    #[test]
+    fn headers_returns_response_headers() {
+        let resp = "hello".into_response();
+        assert_eq!(
+            resp.headers().get(http::header::CONTENT_TYPE).unwrap(),
+            "text/plain; charset=utf-8"
+        );
+    }
+
+    #[test]
+    fn set_header_adds_new_header() {
+        let mut resp = "hello".into_response();
+        resp.set_header("X-Test", "added");
+        assert_eq!(resp.headers().get("X-Test").unwrap(), "added");
+    }
+
+    #[test]
+    fn set_header_replaces_existing_header() {
+        let mut resp = "hello".into_response();
+        resp.set_header("Content-Type", "application/custom");
+        assert_eq!(resp.content_type(), Some("application/custom"));
     }
 }

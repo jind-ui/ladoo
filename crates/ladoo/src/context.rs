@@ -26,8 +26,8 @@ use crate::request::Request;
 ///
 /// Wraps a [`Request`] and is passed through the middleware chain.
 /// Middleware receives an owned `Context`, inspects or modifies the
-/// request through its accessors, then passes it to `Next::run` to
-/// continue the chain.
+/// request through its accessors, then passes it to
+/// [`Next::run`](crate::middleware::Next::run) to continue the chain.
 ///
 /// When the innermost middleware (or the handler itself) needs the raw
 /// [`Request`], call [`into_request`](Context::into_request).

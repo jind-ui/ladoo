@@ -153,6 +153,7 @@ pub mod context;
 pub mod error;
 pub mod extract;
 pub mod handler;
+pub mod middleware;
 pub mod prelude;
 pub mod request;
 pub mod response;

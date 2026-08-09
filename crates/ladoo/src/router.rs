@@ -1,8 +1,11 @@
 //! Route registration and matching.
 //!
-//! The [`Router`] stores routes as `(method, path_pattern, Box<dyn Handler>)`
+//! The [`Router`] stores routes as `(method, path_pattern, Arc<dyn Handler>)`
 //! and matches incoming requests by comparing path segments. Static segments
 //! must match exactly; `:param` segments capture the corresponding value.
+//! Handlers are stored behind an `Arc` (rather than a `Box`) so a matched
+//! route's handler can be shared with a [`Next`](crate::middleware::Next)
+//! for middleware chain execution without borrowing from the router.
 //!
 //! # Examples
 //!
@@ -18,6 +21,8 @@
 //! let m = router.find(&Method::GET, "/users/42").unwrap();
 //! assert_eq!(m.params[0], ("id".to_string(), "42".to_string()));
 //! ```
+
+use std::sync::Arc;
 
 use http::Method;
 
@@ -158,9 +163,9 @@ mod tests {
 }
 
 /// A matched route, containing the handler and extracted path parameters.
-pub struct RouteMatch<'a> {
+pub struct RouteMatch {
     /// The handler to call for this route.
-    pub handler: &'a dyn Handler,
+    pub handler: Arc<dyn Handler>,
     /// Path parameters extracted during matching (e.g., `[("id", "42")]`).
     pub params: PathParams,
 }
@@ -178,7 +183,7 @@ enum Segment {
 struct Route {
     method: Method,
     segments: Vec<Segment>,
-    handler: Box<dyn Handler>,
+    handler: Arc<dyn Handler>,
 }
 
 /// Routes HTTP requests to handlers based on method and path pattern.
@@ -222,7 +227,7 @@ impl Router {
         self.routes.push(Route {
             method,
             segments,
-            handler,
+            handler: Arc::from(handler),
         });
     }
 
@@ -230,7 +235,7 @@ impl Router {
     ///
     /// Returns `None` if no route matches. When multiple routes could match,
     /// routes with static segments are preferred over parameterized ones.
-    pub fn find(&self, method: &Method, path: &str) -> Option<RouteMatch<'_>> {
+    pub fn find(&self, method: &Method, path: &str) -> Option<RouteMatch> {
         let path_segments = Self::split_path(path);
 
         // Prefer static matches over param matches
@@ -253,7 +258,7 @@ impl Router {
         }
 
         best_match.map(|(route, params)| RouteMatch {
-            handler: route.handler.as_ref(),
+            handler: route.handler.clone(),
             params,
         })
     }
