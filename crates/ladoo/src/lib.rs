@@ -149,6 +149,7 @@
 //! ```
 
 pub mod app;
+pub mod context;
 pub mod error;
 pub mod extract;
 pub mod handler;
