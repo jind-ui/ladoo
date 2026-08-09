@@ -251,4 +251,131 @@ mod tests {
 
         handle.abort();
     }
+
+    #[tokio::test]
+    async fn query_extractor_over_http() {
+        use crate::extract::{FromRequest, Query};
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct Params {
+            name: String,
+        }
+
+        let app = App::new().get("/greet", |q: Query<Params>| {
+            format!("Hello, {}!", q.name)
+        });
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/greet?name=Alice")).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "Hello, Alice!");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn json_extractor_over_http() {
+        use crate::extract::{FromRequest, Json};
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Deserialize)]
+        struct Input {
+            x: i32,
+            y: i32,
+        }
+
+        #[derive(Serialize)]
+        struct Output {
+            sum: i32,
+        }
+
+        let app = App::new().post("/add", |body: Json<Input>| {
+            Json(Output { sum: body.x + body.y })
+        });
+        let (url, handle) = start_test_server(app).await;
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{url}/add"))
+            .header("content-type", "application/json")
+            .body(r#"{"x": 3, "y": 4}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["sum"], 7);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn json_bad_content_type_returns_415() {
+        use crate::extract::{FromRequest, Json};
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct Data {
+            value: String,
+        }
+
+        let app = App::new().post("/data", |_body: Json<Data>| "ok");
+        let (url, handle) = start_test_server(app).await;
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{url}/data"))
+            .body(r#"{"value":"test"}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 415);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn json_invalid_body_returns_400() {
+        use crate::extract::{FromRequest, Json};
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct Data {
+            value: i32,
+        }
+
+        let app = App::new().post("/data", |_body: Json<Data>| "ok");
+        let (url, handle) = start_test_server(app).await;
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("{url}/data"))
+            .header("content-type", "application/json")
+            .body(r#"{"value":"not a number"}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn html_response_over_http() {
+        use crate::response::Html;
+
+        let app = App::new().get("/page", |_req: crate::request::Request| {
+            Html("<h1>Hello</h1>".to_string())
+        });
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/page")).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        assert_eq!(ct, "text/html; charset=utf-8");
+        assert_eq!(resp.text().await.unwrap(), "<h1>Hello</h1>");
+
+        handle.abort();
+    }
 }

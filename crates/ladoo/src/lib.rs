@@ -33,6 +33,53 @@
 //!         .run("0.0.0.0:3000");
 //! }
 //! ```
+//!
+//! ## JSON API
+//!
+//! ```rust,no_run
+//! use ladoo::prelude::*;
+//! use serde::{Deserialize, Serialize};
+//!
+//! #[derive(Deserialize)]
+//! struct CreateUser {
+//!     name: String,
+//! }
+//!
+//! #[derive(Serialize)]
+//! struct User {
+//!     id: u64,
+//!     name: String,
+//! }
+//!
+//! fn main() {
+//!     App::new()
+//!         .post("/users", |body: Json<CreateUser>| {
+//!             Json(User { id: 1, name: body.0.name.clone() })
+//!         })
+//!         .run("0.0.0.0:3000");
+//! }
+//! ```
+//!
+//! ## Query Parameters
+//!
+//! ```rust,no_run
+//! use ladoo::prelude::*;
+//! use serde::Deserialize;
+//!
+//! #[derive(Deserialize)]
+//! struct Search {
+//!     q: String,
+//!     page: Option<u32>,
+//! }
+//!
+//! fn main() {
+//!     App::new()
+//!         .get("/search", |params: Query<Search>| {
+//!             format!("Searching for: {}", params.q)
+//!         })
+//!         .run("0.0.0.0:3000");
+//! }
+//! ```
 
 pub mod app;
 pub mod extract;
