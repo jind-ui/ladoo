@@ -103,6 +103,32 @@ impl IntoResponse for Response {
     }
 }
 
+/// Converts a `Result` into a response by delegating to whichever
+/// variant is present.
+///
+/// `Ok(T)` renders `T`; `Err(E)` renders `E`. Both `T` and `E` must
+/// implement [`IntoResponse`], which lets handlers return
+/// `Result<impl IntoResponse, ladoo::error::Error>` directly.
+///
+/// # Examples
+///
+/// ```
+/// use ladoo::response::IntoResponse;
+/// use ladoo::error::Error;
+///
+/// let result: Result<&str, Error> = Ok("hello");
+/// let resp = result.into_response();
+/// assert_eq!(resp.status(), 200);
+/// ```
+impl<T: IntoResponse, E: IntoResponse> IntoResponse for std::result::Result<T, E> {
+    fn into_response(self) -> Response {
+        match self {
+            Ok(v) => v.into_response(),
+            Err(e) => e.into_response(),
+        }
+    }
+}
+
 impl IntoResponse for String {
     fn into_response(self) -> Response {
         let mut headers = http::HeaderMap::new();
