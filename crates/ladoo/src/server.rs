@@ -694,4 +694,72 @@ mod tests {
 
         handle.abort();
     }
+
+    #[tokio::test]
+    async fn multiple_global_middleware_execute_in_order() {
+        async fn mw1(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+            let mut resp = next.run(ctx).await?;
+            resp.set_header("X-MW1", "yes");
+            Ok(resp)
+        }
+        async fn mw2(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+            let mut resp = next.run(ctx).await?;
+            resp.set_header("X-MW2", "yes");
+            Ok(resp)
+        }
+
+        let app = App::new()
+            .use_mw(mw1)
+            .use_mw(mw2)
+            .get("/", |_req: crate::request::Request| "hello");
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(&url).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert!(resp.headers().contains_key("X-MW1"));
+        assert!(resp.headers().contains_key("X-MW2"));
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn middleware_does_not_run_on_404() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static MW_RAN: AtomicBool = AtomicBool::new(false);
+
+        async fn tracker(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+            MW_RAN.store(true, Ordering::SeqCst);
+            Ok(next.run(ctx).await?)
+        }
+
+        MW_RAN.store(false, Ordering::SeqCst);
+        let app = App::new()
+            .use_mw(tracker)
+            .get("/exists", |_req: crate::request::Request| "here");
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/nonexistent")).await.unwrap();
+        assert_eq!(resp.status(), 404);
+        assert!(!MW_RAN.load(Ordering::SeqCst));
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn nested_group_over_http() {
+        let app = App::new()
+            .group("/api", |r| {
+                r.get("/health", |_req: crate::request::Request| "ok")
+                 .get("/version", |_req: crate::request::Request| "1.0")
+            });
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/api/health")).await.unwrap();
+        assert_eq!(resp.text().await.unwrap(), "ok");
+
+        let resp = reqwest::get(format!("{url}/api/version")).await.unwrap();
+        assert_eq!(resp.text().await.unwrap(), "1.0");
+
+        handle.abort();
+    }
 }

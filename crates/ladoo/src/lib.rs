@@ -147,6 +147,46 @@
 //!     })
 //!     .run("0.0.0.0:3000");
 //! ```
+//!
+//! ## Middleware
+//!
+//! Middleware functions wrap the request/response pipeline. Each
+//! middleware receives an owned [`Context`](context::Context) and a
+//! [`Next`](middleware::Next) continuation:
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! async fn logger(ctx: Context, next: Next) -> Result<Response> {
+//!     let method = ctx.method().to_string();
+//!     let path = ctx.path().to_string();
+//!     let start = std::time::Instant::now();
+//!     let resp = next.run(ctx).await?;
+//!     println!("{method} {path} → {} ({}ms)",
+//!         resp.status(), start.elapsed().as_millis());
+//!     Ok(resp)
+//! }
+//!
+//! App::new()
+//!     .use_mw(logger)
+//!     .get("/", |_: Request| "Hello");
+//! ```
+//!
+//! ## Route Groups & Mounting
+//!
+//! Group routes under a shared prefix with scoped middleware:
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! App::new()
+//!     .group("/admin", |r| {
+//!         r.use_mw(auth_middleware)
+//!          .get("/dashboard", dashboard)
+//!          .get("/settings", settings)
+//!     })
+//!     .mount("/api", api_routes());
+//! ```
 
 pub mod app;
 pub mod context;
