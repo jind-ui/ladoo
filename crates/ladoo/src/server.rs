@@ -554,7 +554,7 @@ mod tests {
 
         async fn test_mw(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
             MW_RAN.store(true, Ordering::SeqCst);
-            Ok(next.run(ctx).await?)
+            next.run(ctx).await
         }
 
         MW_RAN.store(false, Ordering::SeqCst);
@@ -729,7 +729,7 @@ mod tests {
 
         async fn tracker(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
             MW_RAN.store(true, Ordering::SeqCst);
-            Ok(next.run(ctx).await?)
+            next.run(ctx).await
         }
 
         MW_RAN.store(false, Ordering::SeqCst);

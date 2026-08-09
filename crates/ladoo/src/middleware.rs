@@ -37,7 +37,7 @@ use crate::response::Response;
 /// A middleware that wraps the request/response pipeline.
 ///
 /// Implementors receive an owned [`Context`] and a [`Next`] that
-/// continues the chain.  The blanket implementation covers all async
+/// continues the chain. The blanket implementation covers all async
 /// functions matching the standard middleware signature, so you rarely
 /// need to implement this trait manually.
 pub trait Middleware: Send + Sync {

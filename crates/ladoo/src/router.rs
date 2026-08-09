@@ -288,28 +288,6 @@ impl Router {
         });
     }
 
-    /// Register a route along with middleware specific to it.
-    ///
-    /// Used internally by route groups, which attach a shared middleware
-    /// stack to every route registered within the group.
-    // Not yet called — route groups (a later task) are the intended caller.
-    #[allow(dead_code)]
-    pub(crate) fn add_with_middleware(
-        &mut self,
-        method: Method,
-        path: &str,
-        handler: Box<dyn Handler>,
-        middleware: Vec<Arc<dyn Middleware>>,
-    ) {
-        let segments = Self::parse_path(path);
-        self.routes.push(Route {
-            method,
-            segments,
-            handler: Arc::from(handler),
-            middleware,
-        });
-    }
-
     /// Find a handler matching the given method and path.
     ///
     /// Returns `None` if no route matches. When multiple routes could match,

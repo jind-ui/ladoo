@@ -438,7 +438,7 @@ mod tests {
     #[test]
     fn use_mw_chains() {
         async fn noop(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
-            Ok(next.run(ctx).await?)
+            next.run(ctx).await
         }
         let app = App::new()
             .use_mw(noop)
