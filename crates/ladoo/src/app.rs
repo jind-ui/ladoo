@@ -215,6 +215,29 @@ impl App {
         Self::new()
     }
 
+    /// Consume the app and return an in-memory test client.
+    ///
+    /// The returned [`TestClient`](crate::testing::TestClient) routes
+    /// requests through the middleware chain and handler without opening
+    /// a TCP connection.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ladoo::prelude::*;
+    ///
+    /// let client = App::test()
+    ///     .get("/", |_: Request| "hello")
+    ///     .into_client();
+    ///
+    /// let resp = client.get("/").send().await;
+    /// assert_eq!(resp.text(), "hello");
+    /// ```
+    pub fn into_client(self) -> crate::testing::TestClient {
+        let (router, state, middleware) = self.into_parts();
+        crate::testing::TestClient::new(router, state, middleware)
+    }
+
     /// Consume the App and return the inner router.
     ///
     /// Used internally by tests to access routes without also needing
