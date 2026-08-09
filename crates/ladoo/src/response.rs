@@ -58,6 +58,12 @@ impl Response {
             .and_then(|v| v.to_str().ok())
     }
 
+    /// Return a new response with the given status code.
+    pub(crate) fn with_status(mut self, status: StatusCode) -> Self {
+        self.status = status;
+        self
+    }
+
     /// Consume this response and return the equivalent hyper response.
     ///
     /// Used internally when sending the response to the client.
@@ -120,25 +126,20 @@ impl IntoResponse for StatusCode {
     }
 }
 
-impl IntoResponse for (StatusCode, &'static str) {
+/// Overrides the status code of any [`IntoResponse`] value.
+///
+/// # Examples
+///
+/// ```
+/// use ladoo::response::IntoResponse;
+/// use http::StatusCode;
+///
+/// let resp = (StatusCode::CREATED, "created").into_response();
+/// assert_eq!(resp.status(), StatusCode::CREATED);
+/// ```
+impl<T: IntoResponse> IntoResponse for (StatusCode, T) {
     fn into_response(self) -> Response {
-        let mut headers = http::HeaderMap::new();
-        headers.insert(
-            http::header::CONTENT_TYPE,
-            http::HeaderValue::from_static("text/plain; charset=utf-8"),
-        );
-        Response::new(self.0, headers, Bytes::from(self.1))
-    }
-}
-
-impl IntoResponse for (StatusCode, String) {
-    fn into_response(self) -> Response {
-        let mut headers = http::HeaderMap::new();
-        headers.insert(
-            http::header::CONTENT_TYPE,
-            http::HeaderValue::from_static("text/plain; charset=utf-8"),
-        );
-        Response::new(self.0, headers, Bytes::from(self.1))
+        self.1.into_response().with_status(self.0)
     }
 }
 

@@ -64,6 +64,12 @@ mod query;
 #[cfg(feature = "json")]
 pub use query::Query;
 
+#[cfg(feature = "json")]
+mod json;
+
+#[cfg(feature = "json")]
+pub use json::Json;
+
 #[cfg(test)]
 mod tests {
     use super::*;
