@@ -187,6 +187,40 @@
 //!     })
 //!     .mount("/api", api_routes());
 //! ```
+//!
+//! ## Testing
+//!
+//! Test your app in-memory without starting a server:
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! #[tokio::test]
+//! async fn returns_hello() {
+//!     let client = App::test()
+//!         .get("/", |_: Request| "hello")
+//!         .into_client();
+//!
+//!     let resp = client.get("/").send().await;
+//!     assert_eq!(resp.status(), 200);
+//!     assert_eq!(resp.text(), "hello");
+//! }
+//! ```
+//!
+//! For integration tests over real TCP:
+//!
+//! ```rust,ignore
+//! #[tokio::test]
+//! async fn integration() {
+//!     let server = App::test()
+//!         .get("/", |_: Request| "hello")
+//!         .spawn()
+//!         .await;
+//!
+//!     let resp = server.get("/").send().await;
+//!     assert_eq!(resp.text(), "hello");
+//! }
+//! ```
 
 pub mod app;
 pub mod context;

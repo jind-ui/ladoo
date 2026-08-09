@@ -28,4 +28,5 @@ pub use crate::request::Request;
 pub use crate::response::{Html, IntoResponse, Response};
 pub use crate::router::Router;
 pub use crate::state::State;
+pub use crate::testing::TestClient;
 pub use http::StatusCode;
