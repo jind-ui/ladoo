@@ -1,4 +1,186 @@
 //! HTTP request type.
 //!
-//! Request wraps hyper's request types and provides access to
-//! path parameters, headers, method, and URI.
+//! [`Request`] provides access to the HTTP method, path, headers,
+//! and route parameters extracted during path matching.
+//!
+//! # Examples
+//!
+//! ```
+//! use ladoo::request::Request;
+//! use http::Method;
+//!
+//! let req = Request::test(Method::GET, "/users/42");
+//! assert_eq!(req.method(), Method::GET);
+//! assert_eq!(req.path(), "/users/42");
+//! ```
+
+use http::{HeaderMap, Method, Uri};
+
+/// Parameters extracted from the URL path during route matching.
+///
+/// Stored as name-value pairs. For example, matching the pattern
+/// `/users/:id` against `/users/42` produces `[("id", "42")]`.
+pub type PathParams = Vec<(String, String)>;
+
+/// An HTTP request received by a handler.
+///
+/// Provides access to the request method, path, headers, and any
+/// path parameters extracted during route matching.
+pub struct Request {
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    params: PathParams,
+}
+
+impl Request {
+    /// Create a new request from its parts.
+    ///
+    /// Called internally when converting a hyper request.
+    // Not yet called: the server that wires this in lands in a later task.
+    #[allow(dead_code)]
+    pub(crate) fn new(method: Method, uri: Uri, headers: HeaderMap, params: PathParams) -> Self {
+        Self {
+            method,
+            uri,
+            headers,
+            params,
+        }
+    }
+
+    /// Create a test request with the given method and path.
+    ///
+    /// Useful for unit testing handlers and extractors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ladoo::request::Request;
+    /// use http::Method;
+    ///
+    /// let req = Request::test(Method::GET, "/users/42");
+    /// assert_eq!(req.path(), "/users/42");
+    /// ```
+    pub fn test(method: Method, path: &str) -> Self {
+        Self {
+            method,
+            uri: path.parse().expect("invalid URI"),
+            headers: HeaderMap::new(),
+            params: Vec::new(),
+        }
+    }
+
+    /// Returns the HTTP method (GET, POST, etc.).
+    pub fn method(&self) -> &Method {
+        &self.method
+    }
+
+    /// Returns the request path without the query string.
+    ///
+    /// For `/search?q=rust`, returns `/search`.
+    pub fn path(&self) -> &str {
+        self.uri.path()
+    }
+
+    /// Returns the full URI including query string.
+    pub fn uri(&self) -> &Uri {
+        &self.uri
+    }
+
+    /// Returns the request headers.
+    pub fn headers(&self) -> &HeaderMap {
+        &self.headers
+    }
+
+    /// Returns the value of a path parameter extracted during route matching.
+    ///
+    /// Returns `None` if the parameter name was not matched.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ladoo::request::Request;
+    /// use http::Method;
+    ///
+    /// let req = Request::test(Method::GET, "/users/42");
+    /// // In a real handler, the router would set params automatically
+    /// assert_eq!(req.param("id"), None);  // no params set yet
+    /// ```
+    pub fn param(&self, name: &str) -> Option<&str> {
+        self.params
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Returns all path parameters as a slice.
+    pub fn params(&self) -> &[(String, String)] {
+        &self.params
+    }
+
+    /// Set the path parameters. Used by the router after matching.
+    // Not yet called: the router that wires this in lands in a later task.
+    #[allow(dead_code)]
+    pub(crate) fn set_params(&mut self, params: PathParams) {
+        self.params = params;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn method_returns_http_method() {
+        let req = Request::test(Method::POST, "/users");
+        assert_eq!(req.method(), Method::POST);
+    }
+
+    #[test]
+    fn path_returns_uri_path() {
+        let req = Request::test(Method::GET, "/users/42");
+        assert_eq!(req.path(), "/users/42");
+    }
+
+    #[test]
+    fn param_returns_matched_value() {
+        let mut req = Request::test(Method::GET, "/users/42");
+        req.set_params(vec![("id".into(), "42".into())]);
+        assert_eq!(req.param("id"), Some("42"));
+    }
+
+    #[test]
+    fn param_returns_none_for_missing_key() {
+        let req = Request::test(Method::GET, "/users/42");
+        assert_eq!(req.param("id"), None);
+    }
+
+    #[test]
+    fn headers_returns_header_map() {
+        let req = Request::test(Method::GET, "/");
+        assert!(req.headers().is_empty());
+    }
+
+    #[test]
+    fn path_with_query_string_returns_only_path() {
+        let req = Request::test(Method::GET, "/search?q=rust");
+        assert_eq!(req.path(), "/search");
+    }
+
+    #[test]
+    fn multiple_params_accessible() {
+        let mut req = Request::test(Method::GET, "/users/42/posts/7");
+        req.set_params(vec![
+            ("user_id".into(), "42".into()),
+            ("post_id".into(), "7".into()),
+        ]);
+        assert_eq!(req.param("user_id"), Some("42"));
+        assert_eq!(req.param("post_id"), Some("7"));
+    }
+
+    #[test]
+    fn root_path() {
+        let req = Request::test(Method::GET, "/");
+        assert_eq!(req.path(), "/");
+    }
+}
