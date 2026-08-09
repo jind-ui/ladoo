@@ -21,13 +21,13 @@
 
 use http::Method;
 
-#[allow(unused_imports)]
-use crate::handler::{Handler, IntoHandler};
+use crate::handler::Handler;
 use crate::request::PathParams;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::handler::IntoHandler;
     use crate::request::Request;
     use http::StatusCode;
 

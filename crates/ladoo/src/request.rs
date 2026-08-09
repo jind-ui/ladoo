@@ -37,8 +37,6 @@ impl Request {
     /// Create a new request from its parts.
     ///
     /// Called internally when converting a hyper request.
-    // Not yet called: the server that wires this in lands in a later task.
-    #[allow(dead_code)]
     pub(crate) fn new(method: Method, uri: Uri, headers: HeaderMap, params: PathParams) -> Self {
         Self {
             method,
@@ -119,7 +117,6 @@ impl Request {
     }
 
     /// Set the path parameters. Used by the router after matching.
-    // Not yet called: the router that wires this in lands in a later task.
     #[allow(dead_code)]
     pub(crate) fn set_params(&mut self, params: PathParams) {
         self.params = params;

@@ -79,7 +79,7 @@ async fn handle_request(
 
     match router.find(&method, path) {
         Some(route_match) => {
-            let request = Request::new(method, uri.clone(), headers, route_match.params);
+            let request = Request::new(method, uri, headers, route_match.params);
             let response = route_match.handler.call(request).await;
             response.into_hyper()
         }
