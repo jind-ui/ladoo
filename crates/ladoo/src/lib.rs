@@ -14,7 +14,7 @@
 //!
 //! fn main() {
 //!     App::new()
-//!         .get("/", |_| "Hello World")
+//!         .get("/", |_: Request| "Hello World")
 //!         .run("0.0.0.0:3000");
 //! }
 //! ```

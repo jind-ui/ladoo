@@ -121,7 +121,7 @@ impl App {
     ///
     /// fn main() {
     ///     App::new()
-    ///         .get("/", |_| "Hello World")
+    ///         .get("/", |_: Request| "Hello World")
     ///         .run("0.0.0.0:3000");
     /// }
     /// ```
@@ -161,7 +161,7 @@ impl App {
     /// async fn main() {
     ///     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     ///     App::new()
-    ///         .get("/", |_| "Hello World")
+    ///         .get("/", |_: Request| "Hello World")
     ///         .serve_listener(listener)
     ///         .await;
     /// }
@@ -180,6 +180,7 @@ impl Default for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extract::FromRequest;
     use crate::request::Request;
     use http::Method;
 
@@ -263,5 +264,31 @@ mod tests {
         req.set_params(m.params.clone());
         let resp = m.handler.call(req).await;
         assert_eq!(resp.body_bytes(), b"User 42");
+    }
+
+    struct PathStr(String);
+    impl FromRequest for PathStr {
+        fn from_request(
+            req: &mut crate::request::Request,
+        ) -> Result<Self, crate::response::Response> {
+            Ok(PathStr(req.path().to_string()))
+        }
+    }
+
+    #[test]
+    fn app_accepts_extractor_handler() {
+        let app = App::new().get("/", |path: PathStr| format!("got: {}", path.0));
+        let router = app.into_router();
+        assert!(router.find(&Method::GET, "/").is_some());
+    }
+
+    #[tokio::test]
+    async fn app_extractor_handler_works() {
+        let app = App::new().get("/test", |path: PathStr| format!("path: {}", path.0));
+        let router = app.into_router();
+        let m = router.find(&Method::GET, "/test").unwrap();
+        let req = crate::request::Request::test(Method::GET, "/test");
+        let resp = m.handler.call(req).await;
+        assert_eq!(resp.body_bytes(), b"path: /test");
     }
 }

@@ -20,6 +20,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::extract::FromRequest;
 use crate::request::Request;
 use crate::response::{IntoResponse, Response};
 
@@ -134,9 +135,134 @@ where
     }
 }
 
+// -- IntoHandler for extractor-based closures: Fn(T1, T2, ...) -> R --
+//
+// `Request` deliberately does not implement `FromRequest`, so these impls
+// never collide with the `Fn(Request) -> R` impls above: a closure taking a
+// bare `Request` argument only matches `IntoHandler<Sync>`/`IntoHandler<Async>`,
+// and a closure taking `FromRequest` types only matches the impls generated
+// here.
+
+/// Marker type for sync extractor-based handlers (used by [`IntoHandler`] impl).
+///
+/// Uses `PhantomData<fn() -> T>` rather than `PhantomData<T>` so that this
+/// marker (and the wrapper structs below) stay `Send + Sync` regardless of
+/// whether the extractor types `T` are — the tuple of extractors is never
+/// actually stored, only used to select the right trait impl.
+pub struct SyncExtract<T>(std::marker::PhantomData<fn() -> T>);
+
+/// Marker type for async extractor-based handlers (used by [`IntoHandler`] impl).
+pub struct AsyncExtract<T>(std::marker::PhantomData<fn() -> T>);
+
+struct SyncExtractHandlerFn<F, T> {
+    f: F,
+    _marker: std::marker::PhantomData<fn() -> T>,
+}
+
+struct AsyncExtractHandlerFn<F, T> {
+    f: F,
+    _marker: std::marker::PhantomData<fn() -> T>,
+}
+
+macro_rules! impl_extract_handler {
+    ($(($T:ident, $t:ident)),*) => {
+        // Sync extractor handler
+        impl<F, $($T,)* R> IntoHandler<SyncExtract<($($T,)*)>> for F
+        where
+            F: Fn($($T),*) -> R + Send + std::marker::Sync + 'static,
+            $($T: FromRequest + 'static,)*
+            R: IntoResponse + 'static,
+        {
+            fn into_handler(self) -> Box<dyn Handler> {
+                Box::new(SyncExtractHandlerFn::<F, ($($T,)*)> {
+                    f: self,
+                    _marker: std::marker::PhantomData,
+                })
+            }
+        }
+
+        impl<F, $($T,)* R> Handler for SyncExtractHandlerFn<F, ($($T,)*)>
+        where
+            F: Fn($($T),*) -> R + Send + std::marker::Sync + 'static,
+            $($T: FromRequest + 'static,)*
+            R: IntoResponse + 'static,
+        {
+            fn call(
+                &self,
+                _req: Request,
+            ) -> Pin<Box<dyn Future<Output = Response> + Send + '_>> {
+                Box::pin(async move {
+                    #[allow(unused_mut)]
+                    let mut _req = _req;
+                    $(
+                        let $t = match $T::from_request(&mut _req) {
+                            Ok(v) => v,
+                            Err(resp) => return resp,
+                        };
+                    )*
+                    (self.f)($($t),*).into_response()
+                })
+            }
+        }
+
+        // Async extractor handler
+        impl<F, $($T,)* Fut, R> IntoHandler<AsyncExtract<($($T,)*)>> for F
+        where
+            F: Fn($($T),*) -> Fut + Send + std::marker::Sync + 'static,
+            Fut: Future<Output = R> + Send + 'static,
+            $($T: FromRequest + 'static,)*
+            R: IntoResponse + 'static,
+        {
+            fn into_handler(self) -> Box<dyn Handler> {
+                Box::new(AsyncExtractHandlerFn::<F, ($($T,)*)> {
+                    f: self,
+                    _marker: std::marker::PhantomData,
+                })
+            }
+        }
+
+        impl<F, $($T,)* Fut, R> Handler for AsyncExtractHandlerFn<F, ($($T,)*)>
+        where
+            F: Fn($($T),*) -> Fut + Send + std::marker::Sync + 'static,
+            Fut: Future<Output = R> + Send + 'static,
+            $($T: FromRequest + 'static,)*
+            R: IntoResponse + 'static,
+        {
+            fn call(
+                &self,
+                _req: Request,
+            ) -> Pin<Box<dyn Future<Output = Response> + Send + '_>> {
+                Box::pin(async move {
+                    #[allow(unused_mut)]
+                    let mut _req = _req;
+                    $(
+                        let $t = match $T::from_request(&mut _req) {
+                            Ok(v) => v,
+                            Err(resp) => return resp,
+                        };
+                    )*
+                    (self.f)($($t),*).await.into_response()
+                })
+            }
+        }
+    };
+}
+
+impl_extract_handler!();
+impl_extract_handler!((T1, t1));
+impl_extract_handler!((T1, t1), (T2, t2));
+impl_extract_handler!((T1, t1), (T2, t2), (T3, t3));
+impl_extract_handler!((T1, t1), (T2, t2), (T3, t3), (T4, t4));
+impl_extract_handler!((T1, t1), (T2, t2), (T3, t3), (T4, t4), (T5, t5));
+impl_extract_handler!((T1, t1), (T2, t2), (T3, t3), (T4, t4), (T5, t5), (T6, t6));
+impl_extract_handler!((T1, t1), (T2, t2), (T3, t3), (T4, t4), (T5, t5), (T6, t6), (T7, t7));
+impl_extract_handler!((T1, t1), (T2, t2), (T3, t3), (T4, t4), (T5, t5), (T6, t6), (T7, t7), (T8, t8));
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extract::FromRequest;
+    use crate::response::IntoResponse;
     use http::{Method, StatusCode};
 
     #[tokio::test]
@@ -220,5 +346,95 @@ mod tests {
         let req = Request::test(Method::GET, "/");
         let resp = handlers[1].call(req).await;
         assert_eq!(resp.body_bytes(), b"second");
+    }
+
+    struct MethodStr(String);
+    impl FromRequest for MethodStr {
+        fn from_request(req: &mut Request) -> Result<Self, Response> {
+            Ok(MethodStr(req.method().to_string()))
+        }
+    }
+
+    struct PathStr(String);
+    impl FromRequest for PathStr {
+        fn from_request(req: &mut Request) -> Result<Self, Response> {
+            Ok(PathStr(req.path().to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn zero_arg_sync_handler() {
+        let handler = (|| "no args").into_handler();
+        let req = Request::test(Method::GET, "/");
+        let resp = handler.call(req).await;
+        assert_eq!(resp.body_bytes(), b"no args");
+    }
+
+    #[tokio::test]
+    async fn zero_arg_async_handler() {
+        let handler = (|| async { "async no args" }).into_handler();
+        let req = Request::test(Method::GET, "/");
+        let resp = handler.call(req).await;
+        assert_eq!(resp.body_bytes(), b"async no args");
+    }
+
+    #[tokio::test]
+    async fn one_extractor_sync_handler() {
+        let handler = (|path: PathStr| format!("path: {}", path.0)).into_handler();
+        let req = Request::test(Method::GET, "/hello");
+        let resp = handler.call(req).await;
+        assert_eq!(resp.body_bytes(), b"path: /hello");
+    }
+
+    #[tokio::test]
+    async fn one_extractor_async_handler() {
+        let handler =
+            (|path: PathStr| async move { format!("async path: {}", path.0) }).into_handler();
+        let req = Request::test(Method::GET, "/hello");
+        let resp = handler.call(req).await;
+        assert_eq!(resp.body_bytes(), b"async path: /hello");
+    }
+
+    #[tokio::test]
+    async fn two_extractor_sync_handler() {
+        let handler = (|method: MethodStr, path: PathStr| {
+            format!("{} {}", method.0, path.0)
+        })
+        .into_handler();
+        let req = Request::test(Method::POST, "/submit");
+        let resp = handler.call(req).await;
+        assert_eq!(resp.body_bytes(), b"POST /submit");
+    }
+
+    #[tokio::test]
+    async fn extractor_failure_returns_error_response() {
+        struct AlwaysFails;
+        impl FromRequest for AlwaysFails {
+            fn from_request(_req: &mut Request) -> Result<Self, Response> {
+                Err((StatusCode::BAD_REQUEST, "extraction failed").into_response())
+            }
+        }
+
+        let handler = (|_: AlwaysFails| "unreachable").into_handler();
+        let req = Request::test(Method::GET, "/");
+        let resp = handler.call(req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(resp.body_bytes(), b"extraction failed");
+    }
+
+    #[tokio::test]
+    async fn existing_request_handler_still_works() {
+        let handler = (|req: Request| format!("path: {}", req.path())).into_handler();
+        let req = Request::test(Method::GET, "/test");
+        let resp = handler.call(req).await;
+        assert_eq!(resp.body_bytes(), b"path: /test");
+    }
+
+    #[tokio::test]
+    async fn underscore_handler_still_works() {
+        let handler = (|_: Request| "still works").into_handler();
+        let req = Request::test(Method::GET, "/");
+        let resp = handler.call(req).await;
+        assert_eq!(resp.body_bytes(), b"still works");
     }
 }
