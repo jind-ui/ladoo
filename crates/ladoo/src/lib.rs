@@ -234,6 +234,7 @@ pub mod response;
 pub mod router;
 pub mod state;
 pub mod testing;
+pub mod config;
 pub(crate) mod server;
 
 /// Derive `Display` and `IntoResponse` for custom error enums.

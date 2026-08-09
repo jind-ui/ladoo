@@ -182,10 +182,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// assert!(is_dev_mode());
 /// ```
 pub fn is_dev_mode() -> bool {
-    match std::env::var("LADOO_ENV").or_else(|_| std::env::var("APP_ENV")) {
-        Ok(env) => env != "production" && env != "staging",
-        Err(_) => true,
-    }
+    crate::config::Environment::detect().is_dev()
 }
 
 fn escape_html(s: &str) -> String {
