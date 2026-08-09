@@ -1,0 +1,11 @@
+[package]
+name = "ladoo-macros"
+version = "0.1.0"
+edition = "2021"
+description = "Procedural macros for the Ladoo framework"
+license = "MIT OR Apache-2.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]

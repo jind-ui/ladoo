@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ladoo",
+    "crates/ladoo-macros",
+    "crates/ladoo-cli",
+]

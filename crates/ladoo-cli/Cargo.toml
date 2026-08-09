@@ -1,0 +1,12 @@
+[package]
+name = "ladoo-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool for the Ladoo framework"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "ladoo"
+path = "src/main.rs"
+
+[dependencies]
