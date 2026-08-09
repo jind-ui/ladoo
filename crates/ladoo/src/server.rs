@@ -446,36 +446,6 @@ mod tests {
         handle.abort();
     }
 
-    #[cfg(feature = "json")]
-    #[tokio::test]
-    async fn state_extractor_works_over_http() {
-        use crate::state::State;
-
-        let app = App::new()
-            .provide(42_u32)
-            .get("/state", |db: State<u32>| format!("state: {}", *db));
-        let (url, handle) = start_test_server(app).await;
-
-        let resp = reqwest::get(format!("{url}/state")).await.unwrap();
-        assert_eq!(resp.status(), 200);
-        assert_eq!(resp.text().await.unwrap(), "state: 42");
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn missing_state_returns_500_over_http() {
-        use crate::state::State;
-
-        let app = App::new().get("/state", |db: State<u32>| format!("state: {}", *db));
-        let (url, handle) = start_test_server(app).await;
-
-        let resp = reqwest::get(format!("{url}/state")).await.unwrap();
-        assert_eq!(resp.status(), 500);
-
-        handle.abort();
-    }
-
     #[tokio::test]
     async fn state_extractor_over_http() {
         let app = App::new()
