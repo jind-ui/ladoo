@@ -315,6 +315,16 @@ mod tests {
     }
 
     #[test]
+    fn param_route_beats_wildcard_at_same_depth() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/*catchall", dummy_handler());
+        router.add(Method::GET, "/:id", dummy_handler());
+
+        let m = router.find(&Method::GET, "/42").unwrap();
+        assert_eq!(m.params, vec![("id".into(), "42".into())]);
+    }
+
+    #[test]
     fn static_prefix_beats_wildcard_prefix() {
         let mut router = Router::new();
         router.add(Method::GET, "/assets/*path", dummy_handler());
@@ -448,25 +458,28 @@ impl Router {
     /// Find a handler matching the given method and path.
     ///
     /// Returns `None` if no route matches. Precedence when multiple routes
-    /// could match: static segments beat parameters, which beat wildcards.
+    /// could match: static segments beat parameters, which beat wildcards
+    /// — even when the competing routes have the same static-segment count
+    /// (e.g. `/:id` beats `/*catchall` for the path `/42`).
     pub fn find(&self, method: &Method, path: &str) -> Option<RouteMatch<'_>> {
         let path_segments = Self::split_path(path);
 
-        // Prefer static matches over param matches
+        // Prefer more static segments, then prefer non-wildcard routes.
         let mut best_match: Option<(&Route, PathParams)> = None;
-        let mut best_static_count = 0;
+        let mut best_score: (usize, bool) = (0, true);
 
         for route in &self.routes {
             if route.method != *method {
                 continue;
             }
 
-            if let Some((params, static_count)) =
+            if let Some((params, static_count, has_wildcard)) =
                 Self::match_segments(&route.segments, &path_segments)
             {
-                if best_match.is_none() || static_count > best_static_count {
+                let score = (static_count, !has_wildcard);
+                if best_match.is_none() || score > best_score {
                     best_match = Some((route, params));
-                    best_static_count = static_count;
+                    best_score = score;
                 }
             }
         }
@@ -517,11 +530,16 @@ impl Router {
     }
 
     /// Try to match path segments against a route pattern.
-    /// Returns extracted params and a count of static matches (for priority).
+    ///
+    /// Returns extracted params plus a priority score used to rank
+    /// competing matches: the count of static segments, and whether the
+    /// pattern ends in a wildcard. Static segments matter most; among
+    /// routes with the same static count, non-wildcard routes (params)
+    /// outrank wildcard routes.
     fn match_segments(
         pattern: &[Segment],
         path: &[&str],
-    ) -> Option<(PathParams, usize)> {
+    ) -> Option<(PathParams, usize, bool)> {
         let has_wildcard = matches!(pattern.last(), Some(Segment::Wildcard(_)));
 
         if has_wildcard {
@@ -558,7 +576,7 @@ impl Router {
             }
         }
 
-        Some((params, static_count))
+        Some((params, static_count, has_wildcard))
     }
 
     /// Register a handler for GET requests.
