@@ -53,6 +53,7 @@ pub struct App {
     logging_config: crate::logging::LoggingConfig,
     shutdown_timeout: std::time::Duration,
     shutdown_hooks: Vec<ShutdownHook>,
+    plugin_names: Vec<String>,
 }
 
 impl App {
@@ -66,6 +67,7 @@ impl App {
             logging_config: Default::default(),
             shutdown_timeout: std::time::Duration::from_secs(30),
             shutdown_hooks: Vec::new(),
+            plugin_names: Vec::new(),
         }
     }
 
@@ -241,6 +243,37 @@ impl App {
     {
         self.shutdown_hooks.push(Box::new(|| Box::pin(hook())));
         self
+    }
+
+    /// Register a plugin.
+    ///
+    /// The plugin's [`register`](crate::plugin::Plugin::register) method is
+    /// called with this `App`, allowing it to add routes, state,
+    /// middleware, and shutdown hooks. If a plugin with the same
+    /// [`name`](crate::plugin::Plugin::name) is already registered, a
+    /// warning is logged and the duplicate is skipped.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ladoo::prelude::*;
+    ///
+    /// App::new()
+    ///     .plugin(HealthPlugin)
+    ///     .plugin(MetricsPlugin::new(9090))
+    ///     .run("0.0.0.0:3000");
+    /// ```
+    pub fn plugin(mut self, plugin: impl crate::plugin::Plugin) -> Self {
+        let name = plugin.name().to_owned();
+        if self.plugin_names.contains(&name) {
+            #[cfg(feature = "logging")]
+            tracing::warn!("plugin '{name}' already registered, skipping");
+            #[cfg(not(feature = "logging"))]
+            eprintln!("warning: plugin '{name}' already registered, skipping");
+            return self;
+        }
+        self.plugin_names.push(name);
+        plugin.register(self)
     }
 
     /// Register a handler for GET requests to the given path.
@@ -880,6 +913,94 @@ mod tests {
         assert!(app.global_middleware.is_empty());
         app.inject_builtin_middleware();
         assert!(app.global_middleware.is_empty());
+    }
+
+    mod plugin_tests {
+        use super::*;
+
+        struct GreetPlugin;
+
+        impl crate::plugin::Plugin for GreetPlugin {
+            fn name(&self) -> &str {
+                "greet"
+            }
+
+            fn register(self, app: App) -> App {
+                app.provide("hello".to_string())
+                    .get("/greet", |_req: Request| "hi")
+            }
+        }
+
+        #[test]
+        fn plugin_registers_state_and_route() {
+            let app = App::new().plugin(GreetPlugin);
+            let (router, state, _, _, _) = app.into_parts();
+            assert_eq!(state.get::<String>(), Some(&"hello".to_string()));
+            assert!(router.find(&Method::GET, "/greet").is_some());
+        }
+
+        struct DuplicatePlugin(u32);
+
+        impl crate::plugin::Plugin for DuplicatePlugin {
+            fn name(&self) -> &str {
+                "dup"
+            }
+
+            fn register(self, app: App) -> App {
+                app.provide(self.0)
+            }
+        }
+
+        #[test]
+        fn duplicate_plugin_skipped() {
+            let app = App::new()
+                .plugin(DuplicatePlugin(1))
+                .plugin(DuplicatePlugin(2));
+            let (_, state, _, _, _) = app.into_parts();
+            assert_eq!(state.get::<u32>(), Some(&1));
+        }
+
+        struct SubPluginParent;
+        struct SubPluginChild;
+
+        impl crate::plugin::Plugin for SubPluginChild {
+            fn name(&self) -> &str {
+                "child"
+            }
+
+            fn register(self, app: App) -> App {
+                app.provide(99_u32)
+            }
+        }
+
+        impl crate::plugin::Plugin for SubPluginParent {
+            fn name(&self) -> &str {
+                "parent"
+            }
+
+            fn register(self, app: App) -> App {
+                app.plugin(SubPluginChild)
+            }
+        }
+
+        #[test]
+        fn sub_plugin_registers_via_parent() {
+            let app = App::new().plugin(SubPluginParent);
+            let (_, state, _, _, _) = app.into_parts();
+            assert_eq!(state.get::<u32>(), Some(&99));
+        }
+
+        #[test]
+        fn plugin_chains_with_routes() {
+            let app = App::new()
+                .get("/before", |_req: Request| "before")
+                .plugin(GreetPlugin)
+                .get("/after", |_req: Request| "after");
+            let (router, _, _, _, _) = app.into_parts();
+            assert!(router.find(&Method::GET, "/before").is_some());
+            assert!(router.find(&Method::GET, "/greet").is_some());
+            assert!(router.find(&Method::GET, "/after").is_some());
+        }
     }
 
     #[cfg(feature = "config")]

@@ -130,4 +130,49 @@ mod tests {
         let router = app.into_router();
         assert!(router.find(&http::Method::GET, "/").is_some());
     }
+
+    use crate::context::Context;
+    use crate::error::Result;
+    use crate::middleware::{Middleware, Next};
+    use crate::response::Response;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    struct TagMiddleware;
+
+    impl Middleware for TagMiddleware {
+        fn call(
+            &self,
+            ctx: Context,
+            next: Next,
+        ) -> Pin<Box<dyn Future<Output = Result<Response>> + Send>> {
+            Box::pin(async move {
+                let mut resp = next.run(ctx).await?;
+                resp.set_header("X-Plugin", "tagged");
+                Ok(resp)
+            })
+        }
+    }
+
+    struct MiddlewarePlugin;
+
+    impl Plugin for MiddlewarePlugin {
+        fn name(&self) -> &str {
+            "mw-plugin"
+        }
+
+        fn register(self, app: App) -> App {
+            app.use_mw(TagMiddleware)
+        }
+    }
+
+    #[tokio::test]
+    async fn plugin_registers_middleware() {
+        let client = App::test()
+            .plugin(MiddlewarePlugin)
+            .get("/", |_req: crate::request::Request| "ok")
+            .into_client();
+        let resp = client.get("/").send().await;
+        assert_eq!(resp.header("X-Plugin"), Some("tagged"));
+    }
 }
