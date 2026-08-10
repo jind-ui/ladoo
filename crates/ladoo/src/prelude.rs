@@ -30,6 +30,8 @@ pub use crate::extract::Json;
 pub use crate::middleware::{Middleware, Next};
 #[cfg(feature = "json")]
 pub use crate::extract::Query;
+#[cfg(feature = "logging")]
+pub use crate::logging::RequestId;
 pub use crate::request::Request;
 pub use crate::router::Router;
 pub use crate::state::State;

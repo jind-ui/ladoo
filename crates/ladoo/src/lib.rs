@@ -177,6 +177,42 @@
 //! `config/{environment}.toml` in the working directory. The
 //! environment is detected from `LADOO_ENV` or `APP_ENV`.
 //!
+//! ## Logging & Request Tracing
+//!
+//! Structured logging is automatic. Dev mode gets pretty output,
+//! prod mode gets JSON — detected from `LADOO_ENV`:
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! App::new()
+//!     .get("/", |_: Request| "hello")
+//!     .run("0.0.0.0:3000");
+//! // Dev:  INFO request{method=GET path=/ request_id=abc-123} ← 200 OK (1ms)
+//! // Prod: {"timestamp":"...","level":"info","method":"GET","path":"/","status":200}
+//! ```
+//!
+//! Every request gets a UUID request ID, propagated via the
+//! `X-Request-Id` header and available as `State<RequestId>`:
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! async fn handler(id: State<RequestId>) -> String {
+//!     format!("request: {}", id.0)
+//! }
+//! ```
+//!
+//! Customize logging:
+//!
+//! ```rust,ignore
+//! App::new()
+//!     .log_level("debug")
+//!     .request_id_header("x-trace-id")
+//!     .get("/", handler)
+//!     .run("0.0.0.0:3000");
+//! ```
+//!
 //! ## Middleware
 //!
 //! Middleware functions wrap the request/response pipeline. Each
