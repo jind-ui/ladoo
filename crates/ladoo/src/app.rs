@@ -457,6 +457,9 @@ impl App {
     #[cfg_attr(not(feature = "logging"), allow(unused_mut))]
     pub async fn serve_listener(mut self, listener: TcpListener) {
         #[cfg(feature = "logging")]
+        crate::logging::init_subscriber(&self.logging_config);
+
+        #[cfg(feature = "logging")]
         self.inject_builtin_middleware();
 
         let (router, state, middleware) = self.into_parts();

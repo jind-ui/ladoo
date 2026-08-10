@@ -92,10 +92,12 @@ impl<T> State<T> {
 }
 
 impl<T: Clone + Send + Sync + 'static> crate::extract::FromRequest for State<T> {
-    /// Extract `T` from application state.
+    /// Extract `T` from per-request state (if present) or application state.
     ///
-    /// Returns a 500 error naming the missing type if `T` was never
-    /// registered with `App::provide`.
+    /// Per-request values injected via [`Context::provide`](crate::context::Context::provide)
+    /// take precedence over app-level state from [`App::provide`](crate::app::App::provide).
+    /// Returns a 500 error naming the missing type if `T` was not found
+    /// in either.
     fn from_request(req: &mut crate::request::Request) -> Result<Self, crate::response::Response> {
         use crate::response::IntoResponse;
 
