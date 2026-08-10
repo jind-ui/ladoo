@@ -147,6 +147,15 @@ mod tests {
     }
 
     #[test]
+    fn builder_overrides_x_content_type_options() {
+        let sh = SecureHeaders::new().x_content_type_options("custom");
+        assert_eq!(
+            sh.x_content_type_options.as_ref().unwrap().to_str().unwrap(),
+            "custom"
+        );
+    }
+
+    #[test]
     fn builder_overrides_content_security_policy() {
         let sh = SecureHeaders::new().content_security_policy("default-src 'none'");
         assert_eq!(
