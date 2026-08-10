@@ -255,6 +255,7 @@ impl TestServer {
         router: Router,
         state: TypeMap,
         global_middleware: Vec<Arc<dyn Middleware>>,
+        shutdown_timeout: std::time::Duration,
     ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -269,7 +270,7 @@ impl TestServer {
                 Arc::new(state),
                 global_middleware,
                 std::future::pending::<()>(),
-                std::time::Duration::from_secs(30),
+                shutdown_timeout,
             )
             .await;
         });

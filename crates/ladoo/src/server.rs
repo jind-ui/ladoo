@@ -315,14 +315,14 @@ mod tests {
         let base_url = format!("http://{addr}");
 
         let handle = tokio::spawn(async move {
-            let (router, state, middleware) = app.into_parts();
+            let (router, state, middleware, shutdown_timeout) = app.into_parts();
             serve(
                 router,
                 listener,
                 Arc::new(state),
                 middleware,
                 std::future::pending::<()>(),
-                std::time::Duration::from_secs(30),
+                shutdown_timeout,
             )
             .await;
         });
@@ -377,7 +377,7 @@ mod tests {
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-        let (router, state, middleware) = app.into_parts();
+        let (router, state, middleware, _shutdown_timeout) = app.into_parts();
         let handle = tokio::spawn(async move {
             serve(
                 router,
@@ -443,7 +443,7 @@ mod tests {
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-        let (router, state, middleware) = app.into_parts();
+        let (router, state, middleware, _shutdown_timeout) = app.into_parts();
         let handle = tokio::spawn(async move {
             serve(
                 router,
