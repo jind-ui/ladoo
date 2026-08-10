@@ -23,9 +23,6 @@
 /// Stored internally in [`App`](crate::app::App) and used to
 /// configure the tracing subscriber and built-in middleware.
 /// Users configure it via builder methods on `App`.
-// Constructed by `App` builder methods in a later phase task; only
-// exercised by tests until then.
-#[allow(dead_code)]
 pub(crate) struct LoggingConfig {
     pub(crate) level: Option<String>,
     pub(crate) filter: Option<String>,
@@ -41,6 +38,46 @@ impl Default for LoggingConfig {
             request_logging: true,
             request_id_header: "x-request-id".to_string(),
         }
+    }
+}
+
+/// Initialize the global tracing subscriber.
+///
+/// Picks format based on the detected environment: pretty-printed
+/// with colors in development, JSON in staging/production. Respects
+/// `RUST_LOG` and the app's configured level/filter.
+///
+/// If a subscriber has already been set (e.g., by the user calling
+/// `tracing_subscriber::init()` before `App::run()`), this is a no-op.
+pub(crate) fn init_subscriber(config: &LoggingConfig) {
+    if tracing::dispatcher::has_been_set() {
+        return;
+    }
+
+    let filter = if let Some(ref f) = config.filter {
+        tracing_subscriber::EnvFilter::new(f)
+    } else if let Ok(env) = std::env::var("RUST_LOG") {
+        tracing_subscriber::EnvFilter::new(env)
+    } else if let Some(ref level) = config.level {
+        tracing_subscriber::EnvFilter::new(level)
+    } else {
+        tracing_subscriber::EnvFilter::new("info")
+    };
+
+    let env = crate::config::Environment::detect();
+
+    // `try_init` (rather than `init`) avoids a panic if another thread
+    // races us between the `has_been_set()` check above and this call.
+    if env.is_dev() {
+        let _ = tracing_subscriber::fmt()
+            .pretty()
+            .with_env_filter(filter)
+            .try_init();
+    } else {
+        let _ = tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(filter)
+            .try_init();
     }
 }
 
@@ -112,5 +149,22 @@ mod tests {
         let id = RequestId("abc-123".to_string());
         let debug = format!("{id:?}");
         assert!(debug.contains("abc-123"));
+    }
+
+    #[test]
+    fn init_subscriber_does_not_panic() {
+        let config = LoggingConfig::default();
+        init_subscriber(&config);
+    }
+
+    #[test]
+    fn init_subscriber_is_noop_when_already_set() {
+        let config = LoggingConfig::default();
+        // First call sets the dispatcher (or is a no-op if another test
+        // already did). Second call is guaranteed to hit the
+        // `has_been_set()` early-return branch either way.
+        init_subscriber(&config);
+        init_subscriber(&config);
+        assert!(tracing::dispatcher::has_been_set());
     }
 }

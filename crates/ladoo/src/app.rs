@@ -48,6 +48,8 @@ pub struct App {
     router: Router,
     state: TypeMap,
     global_middleware: Vec<Arc<dyn Middleware>>,
+    #[cfg(feature = "logging")]
+    logging_config: crate::logging::LoggingConfig,
 }
 
 impl App {
@@ -57,6 +59,8 @@ impl App {
             router: Router::new(),
             state: TypeMap::new(),
             global_middleware: Vec::new(),
+            #[cfg(feature = "logging")]
+            logging_config: Default::default(),
         }
     }
 
@@ -142,6 +146,47 @@ impl App {
             panic!("configuration error: {e}");
         });
         self.provide(config)
+    }
+
+    /// Set the default log level (e.g., `"debug"`, `"info"`, `"warn"`).
+    ///
+    /// Lowest precedence — overridden by `RUST_LOG` or
+    /// [`log_filter`](App::log_filter).
+    #[cfg(feature = "logging")]
+    pub fn log_level(mut self, level: impl Into<String>) -> Self {
+        self.logging_config.level = Some(level.into());
+        self
+    }
+
+    /// Set a tracing filter directive (e.g., `"my_app=debug,sqlx=warn"`).
+    ///
+    /// Highest precedence — overrides both [`log_level`](App::log_level)
+    /// and the `RUST_LOG` environment variable.
+    #[cfg(feature = "logging")]
+    pub fn log_filter(mut self, filter: impl Into<String>) -> Self {
+        self.logging_config.filter = Some(filter.into());
+        self
+    }
+
+    /// Disable automatic request logging and request ID middleware.
+    ///
+    /// The tracing subscriber is still initialized — `tracing::info!()`
+    /// and similar calls in your code still work. Only the automatic
+    /// per-request logging is turned off.
+    #[cfg(feature = "logging")]
+    pub fn disable_request_logging(mut self) -> Self {
+        self.logging_config.request_logging = false;
+        self
+    }
+
+    /// Set a custom request ID header name.
+    ///
+    /// Default: `"x-request-id"`. The middleware reads this header from
+    /// incoming requests and writes it on responses.
+    #[cfg(feature = "logging")]
+    pub fn request_id_header(mut self, header: impl Into<String>) -> Self {
+        self.logging_config.request_id_header = header.into();
+        self
     }
 
     /// Register a handler for GET requests to the given path.
@@ -353,6 +398,9 @@ impl App {
     ///
     /// Panics if the Tokio runtime cannot be created or the address cannot be bound.
     pub fn run(self, addr: &str) {
+        #[cfg(feature = "logging")]
+        crate::logging::init_subscriber(&self.logging_config);
+
         let rt = tokio::runtime::Runtime::new().expect("failed to create Tokio runtime");
 
         let addr: std::net::SocketAddr = addr
@@ -579,6 +627,44 @@ mod tests {
         let app = App::new().mount("/api", api);
         let (router, _, _) = app.into_parts();
         assert!(router.find(&Method::GET, "/api/items").is_some());
+    }
+
+    #[cfg(feature = "logging")]
+    #[test]
+    fn log_level_sets_config() {
+        let app = App::new().log_level("debug");
+        assert_eq!(app.logging_config.level, Some("debug".to_string()));
+    }
+
+    #[cfg(feature = "logging")]
+    #[test]
+    fn log_filter_sets_config() {
+        let app = App::new().log_filter("my_app=debug,sqlx=warn");
+        assert_eq!(
+            app.logging_config.filter,
+            Some("my_app=debug,sqlx=warn".to_string())
+        );
+    }
+
+    #[cfg(feature = "logging")]
+    #[test]
+    fn disable_request_logging_sets_config() {
+        let app = App::new().disable_request_logging();
+        assert!(!app.logging_config.request_logging);
+    }
+
+    #[cfg(feature = "logging")]
+    #[test]
+    fn request_id_header_sets_config() {
+        let app = App::new().request_id_header("x-trace-id");
+        assert_eq!(app.logging_config.request_id_header, "x-trace-id");
+    }
+
+    #[cfg(feature = "logging")]
+    #[test]
+    fn log_level_default_is_none() {
+        let app = App::new();
+        assert!(app.logging_config.level.is_none());
     }
 
     #[cfg(feature = "config")]
