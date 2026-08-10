@@ -324,6 +324,33 @@
 //!     .get("/", |_: Request| "Hello")
 //!     .run("0.0.0.0:3000");
 //! ```
+//!
+//! ## Plugins
+//!
+//! Package routes, state, middleware, and shutdown cleanup into
+//! reusable components:
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! struct HealthPlugin;
+//!
+//! impl Plugin for HealthPlugin {
+//!     fn name(&self) -> &str { "health" }
+//!
+//!     fn register(self, app: App) -> App {
+//!         app.get("/health", |_: Request| "ok")
+//!     }
+//! }
+//!
+//! App::new()
+//!     .plugin(HealthPlugin)
+//!     .run("0.0.0.0:3000");
+//! ```
+//!
+//! Plugins can register middleware, provide state, add routes, and
+//! schedule shutdown hooks. They run once at startup and have zero
+//! per-request cost.
 
 pub mod app;
 pub mod config;

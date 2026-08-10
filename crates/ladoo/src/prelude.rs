@@ -28,6 +28,7 @@ pub use crate::handler::IntoHandler;
 #[cfg(feature = "json")]
 pub use crate::extract::Json;
 pub use crate::middleware::{Middleware, Next};
+pub use crate::plugin::Plugin;
 #[cfg(feature = "json")]
 pub use crate::extract::Query;
 pub use crate::request::Request;
