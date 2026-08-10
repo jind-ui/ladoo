@@ -2,9 +2,10 @@
 //!
 //! The [`Router`] stores routes as `(method, path_pattern, Arc<dyn Handler>)`
 //! and matches incoming requests by comparing path segments. Static segments
-//! must match exactly; `:param` segments capture the corresponding value.
-//! Handlers are stored behind an `Arc` (rather than a `Box`) so a matched
-//! route's handler can be shared with a [`Next`](crate::middleware::Next)
+//! must match exactly; `:param` segments capture the corresponding value;
+//! `*name` wildcard segments capture all remaining path segments joined
+//! with `/`. Handlers are stored behind an `Arc` (rather than a `Box`) so a
+//! matched route's handler can be shared with a [`Next`](crate::middleware::Next)
 //! for middleware chain execution without borrowing from the router.
 //!
 //! # Examples
@@ -382,9 +383,15 @@ struct Route {
 
 /// Routes HTTP requests to handlers based on method and path pattern.
 ///
-/// Routes are checked in registration order. Static segments take priority
-/// over parameter segments when both could match — register specific routes
-/// before parameterized ones for predictable behavior.
+/// Routes are checked in registration order. Precedence: static segments
+/// beat parameter segments, which beat wildcard segments. Register
+/// specific routes before catch-all wildcards for predictable behavior.
+///
+/// # Path Patterns
+///
+/// - `/users` — static segment, matches exactly
+/// - `/users/:id` — parameter segment, captures the value
+/// - `/assets/*path` — wildcard segment, captures all remaining segments
 ///
 /// # Examples
 ///
@@ -397,9 +404,11 @@ struct Route {
 /// let mut router = Router::new();
 /// router.add(Method::GET, "/", (|_req: Request| "home").into_handler());
 /// router.add(Method::GET, "/users/:id", (|_req: Request| "user").into_handler());
+/// router.add(Method::GET, "/files/*path", (|_req: Request| "file").into_handler());
 ///
 /// assert!(router.find(&Method::GET, "/").is_some());
 /// assert!(router.find(&Method::GET, "/users/42").is_some());
+/// assert!(router.find(&Method::GET, "/files/docs/readme.md").is_some());
 /// assert!(router.find(&Method::GET, "/missing").is_none());
 /// ```
 pub struct Router {
@@ -418,8 +427,14 @@ impl Router {
 
     /// Register a route with the given HTTP method, path pattern, and handler.
     ///
-    /// Path patterns support static segments (`/users`) and named parameters
-    /// (`/users/:id`). Parameters are prefixed with `:`.
+    /// Path patterns support static segments (`/users`), named parameters
+    /// (`/users/:id`), and wildcard catch-all segments (`/assets/*path`).
+    /// Parameters are prefixed with `:`, wildcards with `*`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a wildcard segment is not the last segment in the pattern,
+    /// or if a wildcard has no name (bare `*`).
     pub fn add(&mut self, method: Method, path: &str, handler: Box<dyn Handler>) {
         let segments = Self::parse_path(path);
         self.routes.push(Route {
@@ -432,8 +447,8 @@ impl Router {
 
     /// Find a handler matching the given method and path.
     ///
-    /// Returns `None` if no route matches. When multiple routes could match,
-    /// routes with static segments are preferred over parameterized ones.
+    /// Returns `None` if no route matches. Precedence when multiple routes
+    /// could match: static segments beat parameters, which beat wildcards.
     pub fn find(&self, method: &Method, path: &str) -> Option<RouteMatch<'_>> {
         let path_segments = Self::split_path(path);
 
@@ -527,7 +542,7 @@ impl Router {
         for (i, segment) in pattern.iter().enumerate() {
             match segment {
                 Segment::Static(expected) => {
-                    if path.get(i).map_or(true, |v| v != expected) {
+                    if path.get(i).is_none_or(|v| v != expected) {
                         return None;
                     }
                     static_count += 1;
