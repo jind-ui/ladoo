@@ -38,9 +38,6 @@ use crate::app::App;
 ///
 /// Stored by [`App::on_shutdown`](crate::app::App::on_shutdown) and
 /// executed after all connections drain during graceful shutdown.
-///
-/// Unused until a later task wires up `App::on_shutdown`.
-#[allow(dead_code)]
 pub(crate) type ShutdownHook =
     Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
@@ -112,14 +109,7 @@ mod tests {
         assert_eq!(plugin.name(), "test");
     }
 
-    // `#[ignore]` alone only skips *running* a test; this test's body
-    // destructures a 5-tuple from `into_parts()`, which still only returns
-    // 4 elements until Task 2 lands, so it would fail to *compile*.
-    // `#[cfg(any())]` excludes it from compilation entirely; switch it back
-    // to `#[ignore]` (and drop this cfg) after Task 2 expands `into_parts`.
     #[test]
-    #[ignore = "unignore after Task 2 expands into_parts"]
-    #[cfg(any())]
     fn plugin_register_adds_state() {
         let app = App::new();
         let plugin = TestPlugin {

@@ -25,6 +25,7 @@ use tokio::net::TcpListener;
 
 use crate::handler::IntoHandler;
 use crate::middleware::Middleware;
+use crate::plugin::ShutdownHook;
 use crate::router::Router;
 use crate::state::TypeMap;
 
@@ -51,6 +52,7 @@ pub struct App {
     #[cfg(feature = "logging")]
     logging_config: crate::logging::LoggingConfig,
     shutdown_timeout: std::time::Duration,
+    shutdown_hooks: Vec<ShutdownHook>,
 }
 
 impl App {
@@ -63,6 +65,7 @@ impl App {
             #[cfg(feature = "logging")]
             logging_config: Default::default(),
             shutdown_timeout: std::time::Duration::from_secs(30),
+            shutdown_hooks: Vec::new(),
         }
     }
 
@@ -210,6 +213,36 @@ impl App {
         self
     }
 
+    /// Register an async shutdown hook.
+    ///
+    /// The hook runs after all connections have drained (or the shutdown
+    /// timeout has expired) during graceful shutdown. Multiple hooks run
+    /// concurrently.
+    ///
+    /// Plugins use this to clean up external resources (close connection
+    /// pools, flush buffers, disconnect from services). Users can also
+    /// call it directly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ladoo::prelude::*;
+    ///
+    /// App::new()
+    ///     .on_shutdown(|| async {
+    ///         println!("shutting down");
+    ///     })
+    ///     .run("0.0.0.0:3000");
+    /// ```
+    pub fn on_shutdown<F, Fut>(mut self, hook: F) -> Self
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.shutdown_hooks.push(Box::new(|| Box::pin(hook())));
+        self
+    }
+
     /// Register a handler for GET requests to the given path.
     pub fn get<H, M>(mut self, path: &str, handler: H) -> Self
     where
@@ -341,7 +374,7 @@ impl App {
     /// assert_eq!(resp.text(), "hello");
     /// ```
     pub fn into_client(self) -> crate::testing::TestClient {
-        let (router, state, middleware, _shutdown_timeout) = self.into_parts();
+        let (router, state, middleware, _shutdown_timeout, _shutdown_hooks) = self.into_parts();
         crate::testing::TestClient::new(router, state, middleware)
     }
 
@@ -375,8 +408,9 @@ impl App {
     /// ```
     #[cfg(any(test, feature = "test-server"))]
     pub async fn spawn(self) -> crate::testing::TestServer {
-        let (router, state, middleware, shutdown_timeout) = self.into_parts();
-        crate::testing::TestServer::start(router, state, middleware, shutdown_timeout).await
+        let (router, state, middleware, shutdown_timeout, shutdown_hooks) = self.into_parts();
+        crate::testing::TestServer::start(router, state, middleware, shutdown_timeout, shutdown_hooks)
+            .await
     }
 
     /// Consume the App and return the inner router.
@@ -390,7 +424,7 @@ impl App {
     }
 
     /// Consume the App and return the inner router, application state,
-    /// global middleware stack, and shutdown timeout.
+    /// global middleware stack, shutdown timeout, and shutdown hooks.
     ///
     /// Used internally by the server to access routes, dependency
     /// injection state, middleware, and shutdown configuration together.
@@ -401,12 +435,14 @@ impl App {
         TypeMap,
         Vec<Arc<dyn Middleware>>,
         std::time::Duration,
+        Vec<ShutdownHook>,
     ) {
         (
             self.router,
             self.state,
             self.global_middleware,
             self.shutdown_timeout,
+            self.shutdown_hooks,
         )
     }
 
@@ -461,7 +497,7 @@ impl App {
                 .unwrap_or_else(|e| panic!("failed to bind to {addr}: {e}"));
 
             println!("Ladoo listening on http://{addr}");
-            let (router, state, middleware, shutdown_timeout) = self.into_parts();
+            let (router, state, middleware, shutdown_timeout, shutdown_hooks) = self.into_parts();
             crate::server::serve(
                 router,
                 listener,
@@ -469,6 +505,7 @@ impl App {
                 middleware,
                 crate::shutdown::shutdown_signal(),
                 shutdown_timeout,
+                shutdown_hooks,
             )
             .await;
         });
@@ -513,7 +550,7 @@ impl App {
         #[cfg(feature = "logging")]
         self.inject_builtin_middleware();
 
-        let (router, state, middleware, shutdown_timeout) = self.into_parts();
+        let (router, state, middleware, shutdown_timeout, shutdown_hooks) = self.into_parts();
         crate::server::serve(
             router,
             listener,
@@ -521,6 +558,7 @@ impl App {
             middleware,
             crate::shutdown::shutdown_signal(),
             shutdown_timeout,
+            shutdown_hooks,
         )
         .await;
     }
@@ -700,7 +738,7 @@ mod tests {
     #[test]
     fn into_parts_returns_router_and_state() {
         let app = App::new().provide(42_u32).get("/", |_req: Request| "hi");
-        let (router, state, _middleware, _shutdown_timeout) = app.into_parts();
+        let (router, state, _middleware, _shutdown_timeout, _shutdown_hooks) = app.into_parts();
         assert!(router.find(&Method::GET, "/").is_some());
         assert_eq!(state.get::<u32>(), Some(&42));
     }
@@ -708,15 +746,24 @@ mod tests {
     #[test]
     fn shutdown_timeout_stores_duration() {
         let app = App::new().shutdown_timeout(std::time::Duration::from_secs(60));
-        let (_, _, _, timeout) = app.into_parts();
+        let (_, _, _, timeout, _) = app.into_parts();
         assert_eq!(timeout, std::time::Duration::from_secs(60));
     }
 
     #[test]
     fn default_shutdown_timeout_is_30s() {
         let app = App::new();
-        let (_, _, _, timeout) = app.into_parts();
+        let (_, _, _, timeout, _) = app.into_parts();
         assert_eq!(timeout, std::time::Duration::from_secs(30));
+    }
+
+    #[test]
+    fn on_shutdown_stores_hooks() {
+        let app = App::new()
+            .on_shutdown(|| async {})
+            .on_shutdown(|| async {});
+        let (_, _, _, _, hooks) = app.into_parts();
+        assert_eq!(hooks.len(), 2);
     }
 
     #[test]
@@ -736,7 +783,7 @@ mod tests {
             r.get("/users", |_req: Request| "users")
                 .post("/users", |_req: Request| "created")
         });
-        let (router, _, _, _) = app.into_parts();
+        let (router, _, _, _, _) = app.into_parts();
         assert!(router.find(&Method::GET, "/api/users").is_some());
         assert!(router.find(&Method::POST, "/api/users").is_some());
     }
@@ -745,7 +792,7 @@ mod tests {
     fn mount_adds_prefixed_routes() {
         let api = Router::new().get("/items", |_req: Request| "items");
         let app = App::new().mount("/api", api);
-        let (router, _, _, _) = app.into_parts();
+        let (router, _, _, _, _) = app.into_parts();
         assert!(router.find(&Method::GET, "/api/items").is_some());
     }
 
@@ -804,7 +851,7 @@ mod tests {
         let app = App::test()
             .disable_request_logging()
             .get("/", |_req: crate::request::Request| "hello");
-        let (_, _, middleware, _) = app.into_parts();
+        let (_, _, middleware, _, _) = app.into_parts();
         // No built-in middleware when disabled
         assert!(middleware.is_empty());
     }
@@ -853,7 +900,7 @@ mod tests {
         #[test]
         fn config_provides_as_state() {
             let app = App::new().config::<TestConfig>();
-            let (_, state, _, _) = app.into_parts();
+            let (_, state, _, _, _) = app.into_parts();
             assert_eq!(state.get::<TestConfig>().unwrap().port, 9090);
         }
 
@@ -878,7 +925,7 @@ mod tests {
             let app = App::new()
                 .config::<TestConfig>()
                 .get("/", |_req: Request| "hello");
-            let (router, state, _, _) = app.into_parts();
+            let (router, state, _, _, _) = app.into_parts();
             assert!(router.find(&Method::GET, "/").is_some());
             assert_eq!(state.get::<TestConfig>().unwrap().port, 9090);
         }

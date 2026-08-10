@@ -31,6 +31,7 @@ use tokio::net::TcpListener;
 use tokio::task::JoinSet;
 
 use crate::middleware::Middleware;
+use crate::plugin::ShutdownHook;
 use crate::request::Request;
 use crate::router::Router;
 use crate::state::TypeMap;
@@ -56,6 +57,7 @@ pub(crate) async fn serve(
     global_middleware: Vec<Arc<dyn Middleware>>,
     shutdown: impl Future<Output = ()> + Send + 'static,
     shutdown_timeout: Duration,
+    shutdown_hooks: Vec<ShutdownHook>,
 ) {
     let router = Arc::new(router);
     let global_middleware: Arc<[Arc<dyn Middleware>]> = global_middleware.into();
@@ -147,6 +149,36 @@ pub(crate) async fn serve(
             }
 
             connections.abort_all();
+        }
+    }
+
+    // Run shutdown hooks concurrently with a timeout
+    if !shutdown_hooks.is_empty() {
+        let mut shutdown_set = JoinSet::new();
+        for hook in shutdown_hooks {
+            shutdown_set.spawn(hook());
+        }
+
+        match tokio::time::timeout(Duration::from_secs(10), async {
+            while shutdown_set.join_next().await.is_some() {}
+        })
+        .await
+        {
+            Ok(()) => {
+                #[cfg(feature = "logging")]
+                tracing::info!("all shutdown hooks completed");
+            }
+            Err(_) => {
+                #[cfg(feature = "logging")]
+                {
+                    let remaining = shutdown_set.len();
+                    tracing::warn!(
+                        "shutdown hook timeout, {remaining} hook(s) still running"
+                    );
+                }
+
+                shutdown_set.abort_all();
+            }
         }
     }
 }
@@ -315,7 +347,7 @@ mod tests {
         let base_url = format!("http://{addr}");
 
         let handle = tokio::spawn(async move {
-            let (router, state, middleware, shutdown_timeout) = app.into_parts();
+            let (router, state, middleware, shutdown_timeout, shutdown_hooks) = app.into_parts();
             serve(
                 router,
                 listener,
@@ -323,6 +355,7 @@ mod tests {
                 middleware,
                 std::future::pending::<()>(),
                 shutdown_timeout,
+                shutdown_hooks,
             )
             .await;
         });
@@ -351,6 +384,7 @@ mod tests {
                     rx.await.ok();
                 },
                 std::time::Duration::from_secs(5),
+                vec![],
             )
             .await;
         });
@@ -377,7 +411,7 @@ mod tests {
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-        let (router, state, middleware, _shutdown_timeout) = app.into_parts();
+        let (router, state, middleware, _shutdown_timeout, _shutdown_hooks) = app.into_parts();
         let handle = tokio::spawn(async move {
             serve(
                 router,
@@ -388,6 +422,7 @@ mod tests {
                     rx.await.ok();
                 },
                 std::time::Duration::from_secs(5),
+                vec![],
             )
             .await;
         });
@@ -443,7 +478,7 @@ mod tests {
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-        let (router, state, middleware, _shutdown_timeout) = app.into_parts();
+        let (router, state, middleware, _shutdown_timeout, _shutdown_hooks) = app.into_parts();
         let handle = tokio::spawn(async move {
             serve(
                 router,
@@ -454,6 +489,7 @@ mod tests {
                     rx.await.ok();
                 },
                 std::time::Duration::from_millis(200),
+                vec![],
             )
             .await;
         });
@@ -1083,5 +1119,159 @@ mod tests {
         assert_eq!(resp.text().await.unwrap(), "1.0");
 
         handle.abort();
+    }
+
+    #[tokio::test]
+    async fn shutdown_hooks_run_after_drain() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let flag = Arc::new(AtomicBool::new(false));
+        let flag_clone = flag.clone();
+
+        let hook: crate::plugin::ShutdownHook = Box::new(move || {
+            Box::pin(async move {
+                flag_clone.store(true, Ordering::SeqCst);
+            })
+        });
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let router = Router::new();
+        let state = Arc::new(TypeMap::new());
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+        let handle = tokio::spawn(async move {
+            serve(
+                router,
+                listener,
+                state,
+                vec![],
+                async {
+                    rx.await.ok();
+                },
+                std::time::Duration::from_secs(5),
+                vec![hook],
+            )
+            .await;
+        });
+
+        tx.send(()).unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+            .await
+            .expect("serve did not return")
+            .expect("serve panicked");
+
+        assert!(flag.load(Ordering::SeqCst), "shutdown hook did not run");
+    }
+
+    #[tokio::test]
+    async fn multiple_shutdown_hooks_all_run() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let counter = Arc::new(AtomicU32::new(0));
+        let c1 = counter.clone();
+        let c2 = counter.clone();
+        let c3 = counter.clone();
+
+        let hooks: Vec<crate::plugin::ShutdownHook> = vec![
+            Box::new(move || {
+                Box::pin(async move {
+                    c1.fetch_add(1, Ordering::SeqCst);
+                })
+            }),
+            Box::new(move || {
+                Box::pin(async move {
+                    c2.fetch_add(1, Ordering::SeqCst);
+                })
+            }),
+            Box::new(move || {
+                Box::pin(async move {
+                    c3.fetch_add(1, Ordering::SeqCst);
+                })
+            }),
+        ];
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let router = Router::new();
+        let state = Arc::new(TypeMap::new());
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+        let handle = tokio::spawn(async move {
+            serve(
+                router,
+                listener,
+                state,
+                vec![],
+                async {
+                    rx.await.ok();
+                },
+                std::time::Duration::from_secs(5),
+                hooks,
+            )
+            .await;
+        });
+
+        tx.send(()).unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+            .await
+            .expect("serve did not return")
+            .expect("serve panicked");
+
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn shutdown_hooks_aborted_past_timeout() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let fast_flag = Arc::new(AtomicBool::new(false));
+        let fast_clone = fast_flag.clone();
+
+        let fast_hook: crate::plugin::ShutdownHook = Box::new(move || {
+            Box::pin(async move {
+                fast_clone.store(true, Ordering::SeqCst);
+            })
+        });
+
+        let slow_hook: crate::plugin::ShutdownHook = Box::new(|| {
+            Box::pin(async {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            })
+        });
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let router = Router::new();
+        let state = Arc::new(TypeMap::new());
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+        let handle = tokio::spawn(async move {
+            serve(
+                router,
+                listener,
+                state,
+                vec![],
+                async {
+                    rx.await.ok();
+                },
+                std::time::Duration::from_secs(5),
+                vec![fast_hook, slow_hook],
+            )
+            .await;
+        });
+
+        tx.send(()).unwrap();
+
+        // serve() should still return within a reasonable time despite
+        // the slow hook — the 10s hook timeout + abort kicks in.
+        tokio::time::timeout(std::time::Duration::from_secs(15), handle)
+            .await
+            .expect("serve hung on slow shutdown hook")
+            .expect("serve panicked");
+
+        assert!(fast_flag.load(Ordering::SeqCst), "fast hook should have run");
     }
 }

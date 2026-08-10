@@ -25,6 +25,8 @@ use bytes::Bytes;
 use http::{HeaderMap, Method, StatusCode};
 
 use crate::middleware::Middleware;
+#[cfg(any(test, feature = "test-server"))]
+use crate::plugin::ShutdownHook;
 use crate::router::Router;
 use crate::state::TypeMap;
 
@@ -256,6 +258,7 @@ impl TestServer {
         state: TypeMap,
         global_middleware: Vec<Arc<dyn Middleware>>,
         shutdown_timeout: std::time::Duration,
+        shutdown_hooks: Vec<ShutdownHook>,
     ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -271,6 +274,7 @@ impl TestServer {
                 global_middleware,
                 std::future::pending::<()>(),
                 shutdown_timeout,
+                shutdown_hooks,
             )
             .await;
         });
