@@ -34,6 +34,7 @@ pub use crate::request::Request;
 #[cfg(feature = "logging")]
 pub use crate::logging::RequestId;
 pub use crate::router::Router;
+pub use crate::secure_headers::SecureHeaders;
 pub use crate::state::State;
 pub use http::StatusCode;
 pub use crate::testing::TestClient;

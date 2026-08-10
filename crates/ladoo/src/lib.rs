@@ -286,6 +286,44 @@
 //!     assert_eq!(resp.text(), "hello");
 //! }
 //! ```
+//!
+//! ## Security Headers
+//!
+//! Opt-in secure response headers with sensible defaults:
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! App::new()
+//!     .use_mw(SecureHeaders::default())
+//!     .get("/", |_: Request| "Hello")
+//!     .run("0.0.0.0:3000");
+//! ```
+//!
+//! Customize individual headers or disable them:
+//!
+//! ```rust,ignore
+//! App::new().use_mw(
+//!     SecureHeaders::new()
+//!         .hsts("max-age=31536000")
+//!         .x_frame_options(None)
+//! )
+//! ```
+//!
+//! ## Graceful Shutdown
+//!
+//! The server listens for SIGTERM and SIGINT and drains in-flight
+//! requests before exiting (default 30-second timeout):
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//! use std::time::Duration;
+//!
+//! App::new()
+//!     .shutdown_timeout(Duration::from_secs(60))
+//!     .get("/", |_: Request| "Hello")
+//!     .run("0.0.0.0:3000");
+//! ```
 
 pub mod app;
 pub mod config;
