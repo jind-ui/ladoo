@@ -334,6 +334,7 @@ pub mod handler;
 #[cfg(feature = "logging")]
 pub mod logging;
 pub mod middleware;
+pub mod plugin;
 pub mod prelude;
 pub mod request;
 pub mod response;
