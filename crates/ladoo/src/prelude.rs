@@ -15,23 +15,23 @@
 pub use crate::app::App;
 #[cfg(feature = "macros")]
 pub use crate::AppError;
-pub use crate::context::Context;
-pub use crate::error::{Error, Result};
-pub use crate::extract::FromRequest;
-#[cfg(feature = "json")]
-pub use crate::extract::Json;
-#[cfg(feature = "json")]
-pub use crate::extract::Query;
-pub use crate::handler::IntoHandler;
-pub use crate::middleware::{Middleware, Next};
-pub use crate::request::Request;
-pub use crate::response::{Html, IntoResponse, Response};
-pub use crate::router::Router;
-pub use crate::state::State;
-pub use crate::config::Environment;
 #[cfg(feature = "config")]
 pub use crate::config::{Config, ConfigError};
 #[cfg(all(feature = "macros", feature = "config"))]
-pub use crate::Config as Config;
-pub use crate::testing::TestClient;
+pub use crate::Config;
+pub use crate::context::Context;
+pub use crate::config::Environment;
+pub use crate::error::{Error, Result};
+pub use crate::extract::FromRequest;
+pub use crate::response::{Html, IntoResponse, Response};
+pub use crate::handler::IntoHandler;
+#[cfg(feature = "json")]
+pub use crate::extract::Json;
+pub use crate::middleware::{Middleware, Next};
+#[cfg(feature = "json")]
+pub use crate::extract::Query;
+pub use crate::request::Request;
+pub use crate::router::Router;
+pub use crate::state::State;
 pub use http::StatusCode;
+pub use crate::testing::TestClient;

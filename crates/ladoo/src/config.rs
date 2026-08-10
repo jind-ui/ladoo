@@ -200,6 +200,9 @@ impl std::error::Error for ConfigError {
     }
 }
 
+/// Renders as a 500 Internal Server Error. Note: error messages may
+/// contain environment variable values — avoid propagating `ConfigError`
+/// directly as handler responses in production.
 #[cfg(feature = "config")]
 impl crate::response::IntoResponse for ConfigError {
     fn into_response(self) -> crate::response::Response {
