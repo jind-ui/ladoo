@@ -242,3 +242,9 @@ pub(crate) mod server;
 /// See [`ladoo_macros::AppError`] for the attribute syntax.
 #[cfg(feature = "macros")]
 pub use ladoo_macros::AppError;
+
+/// Derive `Config` for typed configuration loading.
+///
+/// See [`ladoo_macros::Config`] for the attribute syntax.
+#[cfg(all(feature = "macros", feature = "config"))]
+pub use ladoo_macros::Config;
