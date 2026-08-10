@@ -382,6 +382,12 @@ impl App {
     /// Creates a Tokio runtime internally — no `#[tokio::main]` needed.
     /// This is the simplest way to start a Ladoo app.
     ///
+    /// When the `logging` feature is enabled (the default), two built-in
+    /// middleware are prepended to the chain before the server starts:
+    /// request ID generation and request logging. Call
+    /// [`disable_request_logging`](App::disable_request_logging) to turn
+    /// this off.
+    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -426,6 +432,12 @@ impl App {
     ///
     /// Useful for tests (bind to port 0 for a random port) and advanced
     /// use cases where you manage the Tokio runtime yourself.
+    ///
+    /// When the `logging` feature is enabled (the default), two built-in
+    /// middleware are prepended to the chain before the server starts:
+    /// request ID generation and request logging. Call
+    /// [`disable_request_logging`](App::disable_request_logging) to turn
+    /// this off.
     ///
     /// # Examples
     ///
