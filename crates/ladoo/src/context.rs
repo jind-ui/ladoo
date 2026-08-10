@@ -98,7 +98,7 @@ impl Context {
     }
 
     /// Read a value from per-request state.
-    // Consumed by the request ID middleware in a later phase task; only
+    // Consumed by the request logger middleware (Task 5); only
     // exercised by tests until then.
     #[allow(dead_code)]
     pub(crate) fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
