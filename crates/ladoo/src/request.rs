@@ -31,7 +31,6 @@ pub type PathParams = Vec<(String, String)>;
 ///
 /// Provides access to the request method, path, headers, body, and any
 /// path parameters extracted during route matching.
-#[derive(Clone)]
 pub struct Request {
     method: Method,
     uri: Uri,
@@ -39,6 +38,21 @@ pub struct Request {
     params: PathParams,
     body: Bytes,
     extensions: Arc<TypeMap>,
+    per_request: TypeMap,
+}
+
+impl Clone for Request {
+    fn clone(&self) -> Self {
+        Self {
+            method: self.method.clone(),
+            uri: self.uri.clone(),
+            headers: self.headers.clone(),
+            params: self.params.clone(),
+            body: self.body.clone(),
+            extensions: self.extensions.clone(),
+            per_request: TypeMap::new(),
+        }
+    }
 }
 
 impl Request {
@@ -60,6 +74,7 @@ impl Request {
             params,
             body,
             extensions,
+            per_request: TypeMap::new(),
         }
     }
 
@@ -84,6 +99,7 @@ impl Request {
             params: Vec::new(),
             body: Bytes::new(),
             extensions: Arc::new(TypeMap::new()),
+            per_request: TypeMap::new(),
         }
     }
 
@@ -109,6 +125,7 @@ impl Request {
             params: Vec::new(),
             body: Bytes::copy_from_slice(body),
             extensions: Arc::new(TypeMap::new()),
+            per_request: TypeMap::new(),
         }
     }
 
@@ -139,6 +156,7 @@ impl Request {
             params: Vec::new(),
             body: Bytes::new(),
             extensions: Arc::new(TypeMap::new()),
+            per_request: TypeMap::new(),
         }
     }
 
@@ -221,6 +239,19 @@ impl Request {
         &self.extensions
     }
 
+    /// Insert a value into this request's per-request state.
+    ///
+    /// Used by framework middleware to inject request-scoped values
+    /// (like `RequestId`) that handlers can extract via `State<T>`.
+    pub(crate) fn provide<T: Send + Sync + 'static>(&mut self, value: T) {
+        self.per_request.insert(value);
+    }
+
+    /// Returns the per-request state map.
+    pub(crate) fn per_request(&self) -> &TypeMap {
+        &self.per_request
+    }
+
     /// Register a value on this request's application state, for testing.
     ///
     /// Lets you unit test handlers and extractors that depend on
@@ -256,6 +287,7 @@ impl Request {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extract::FromRequest;
 
     #[test]
     fn method_returns_http_method() {
@@ -379,5 +411,13 @@ mod tests {
         req.provide_test_state(String::from("hello"));
         assert_eq!(req.extensions().get::<u32>(), Some(&42));
         assert_eq!(req.extensions().get::<String>(), Some(&String::from("hello")));
+    }
+
+    #[test]
+    fn clone_resets_per_request_state() {
+        let mut req = Request::test(Method::GET, "/");
+        req.provide(42_u32);
+        let mut cloned = req.clone();
+        assert!(crate::state::State::<u32>::from_request(&mut cloned).is_err());
     }
 }

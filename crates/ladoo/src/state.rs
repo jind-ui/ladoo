@@ -99,6 +99,10 @@ impl<T: Clone + Send + Sync + 'static> crate::extract::FromRequest for State<T> 
     fn from_request(req: &mut crate::request::Request) -> Result<Self, crate::response::Response> {
         use crate::response::IntoResponse;
 
+        if let Some(value) = req.per_request().get::<T>() {
+            return Ok(State(value.clone()));
+        }
+
         match req.extensions().get::<T>() {
             Some(value) => Ok(State(value.clone())),
             None => {
@@ -243,5 +247,22 @@ mod tests {
         });
         let pool = State::<DbPool>::from_request(&mut req).unwrap();
         assert_eq!(pool.url, "postgres://localhost");
+    }
+
+    #[test]
+    fn state_extractor_reads_per_request_state() {
+        let mut req = crate::request::Request::test(Method::GET, "/");
+        req.provide(42_u32);
+        let extracted = State::<u32>::from_request(&mut req).unwrap();
+        assert_eq!(*extracted, 42);
+    }
+
+    #[test]
+    fn per_request_state_overrides_app_state() {
+        let mut req = crate::request::Request::test(Method::GET, "/");
+        req.provide_test_state(1_u32);
+        req.provide(2_u32);
+        let extracted = State::<u32>::from_request(&mut req).unwrap();
+        assert_eq!(*extracted, 2);
     }
 }

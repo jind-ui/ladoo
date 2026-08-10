@@ -75,11 +75,41 @@ impl Context {
     pub fn into_request(self) -> Request {
         self.request
     }
+
+    /// Insert a value into per-request state.
+    ///
+    /// Values inserted here are available to downstream middleware and
+    /// handlers via [`State<T>`](crate::state::State) extraction.
+    /// Per-request state takes precedence over app-level state from
+    /// [`App::provide`](crate::app::App::provide).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ladoo::prelude::*;
+    ///
+    /// async fn my_middleware(mut ctx: Context, next: Next) -> Result<Response> {
+    ///     ctx.provide(RequestId("custom-id".into()));
+    ///     next.run(ctx).await
+    /// }
+    /// ```
+    pub fn provide<T: Send + Sync + 'static>(&mut self, value: T) {
+        self.request.provide(value);
+    }
+
+    /// Read a value from per-request state.
+    // Consumed by the request ID middleware in a later phase task; only
+    // exercised by tests until then.
+    #[allow(dead_code)]
+    pub(crate) fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
+        self.request.per_request().get::<T>()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extract::FromRequest;
     use crate::request::Request;
     use http::Method;
 
@@ -139,5 +169,31 @@ mod tests {
         let ctx = Context::new(req);
         let req = ctx.into_request();
         assert_eq!(req.path(), "/test");
+    }
+
+    #[test]
+    fn provide_inserts_per_request_state() {
+        let req = Request::test(Method::GET, "/");
+        let mut ctx = Context::new(req);
+        ctx.provide(42_u32);
+        let req = ctx.into_request();
+        let mut req = req;
+        let extracted = crate::state::State::<u32>::from_request(&mut req).unwrap();
+        assert_eq!(*extracted, 42);
+    }
+
+    #[test]
+    fn get_reads_per_request_state() {
+        let req = Request::test(Method::GET, "/");
+        let mut ctx = Context::new(req);
+        ctx.provide(42_u32);
+        assert_eq!(ctx.get::<u32>(), Some(&42));
+    }
+
+    #[test]
+    fn get_returns_none_for_missing() {
+        let req = Request::test(Method::GET, "/");
+        let ctx = Context::new(req);
+        assert_eq!(ctx.get::<u32>(), None);
     }
 }
