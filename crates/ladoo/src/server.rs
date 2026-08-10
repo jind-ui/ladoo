@@ -17,7 +17,9 @@
 //! [`Response`]: crate::response::Response
 
 use std::convert::Infallible;
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
 use http::StatusCode;
@@ -26,6 +28,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
+use tokio::task::JoinSet;
 
 use crate::middleware::Middleware;
 use crate::request::Request;
@@ -40,48 +43,111 @@ use crate::state::TypeMap;
 /// `state` is shared across every request and is what powers the
 /// [`State<T>`](crate::state::State) extractor. `global_middleware` runs on
 /// every matched route, ahead of any route-specific middleware.
+///
+/// `shutdown` resolves when the server should stop accepting new
+/// connections. Once it resolves, in-flight connections are given
+/// `shutdown_timeout` to finish gracefully — hyper stops accepting new
+/// requests on each connection but lets the current one complete — before
+/// being forcibly aborted.
 pub(crate) async fn serve(
     router: Router,
     listener: TcpListener,
     state: Arc<TypeMap>,
     global_middleware: Vec<Arc<dyn Middleware>>,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+    shutdown_timeout: Duration,
 ) {
     let router = Arc::new(router);
     let global_middleware: Arc<[Arc<dyn Middleware>]> = global_middleware.into();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let mut connections = JoinSet::new();
+
+    tokio::pin!(shutdown);
 
     loop {
-        let (stream, _addr) = match listener.accept().await {
-            Ok(conn) => conn,
-            Err(_) => continue,
-        };
+        tokio::select! {
+            result = listener.accept() => {
+                let (stream, _addr) = match result {
+                    Ok(conn) => conn,
+                    Err(_) => continue,
+                };
 
-        let router = router.clone();
-        let state = state.clone();
-        let global_mw = global_middleware.clone();
-        let io = TokioIo::new(stream);
-
-        tokio::spawn(async move {
-            let router = router.clone();
-            let state = state.clone();
-            let global_mw = global_mw.clone();
-
-            let service = service_fn(move |hyper_req: hyper::Request<hyper::body::Incoming>| {
                 let router = router.clone();
                 let state = state.clone();
-                let global_mw = global_mw.clone();
-                async move {
-                    let response = handle_request(&router, hyper_req, state, &global_mw).await;
-                    Ok::<_, Infallible>(response)
-                }
-            });
+                let global_mw = global_middleware.clone();
+                let mut rx = shutdown_rx.clone();
+                let io = TokioIo::new(stream);
 
-            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
-                // Connection errors (client disconnect, etc.) are normal
-                if !err.is_incomplete_message() {
-                    eprintln!("connection error: {err}");
-                }
+                connections.spawn(async move {
+                    let router = router.clone();
+                    let state = state.clone();
+                    let global_mw = global_mw.clone();
+
+                    let service = service_fn(move |hyper_req: hyper::Request<hyper::body::Incoming>| {
+                        let router = router.clone();
+                        let state = state.clone();
+                        let global_mw = global_mw.clone();
+                        async move {
+                            let response = handle_request(&router, hyper_req, state, &global_mw).await;
+                            Ok::<_, Infallible>(response)
+                        }
+                    });
+
+                    let mut conn = http1::Builder::new().serve_connection(io, service);
+                    let mut conn = Pin::new(&mut conn);
+
+                    tokio::select! {
+                        result = &mut conn => {
+                            if let Err(err) = result {
+                                if !err.is_incomplete_message() {
+                                    eprintln!("connection error: {err}");
+                                }
+                            }
+                        }
+                        _ = rx.changed() => {
+                            conn.as_mut().graceful_shutdown();
+                            if let Err(err) = conn.await {
+                                if !err.is_incomplete_message() {
+                                    eprintln!("connection error during drain: {err}");
+                                }
+                            }
+                        }
+                    }
+                });
             }
-        });
+            _ = &mut shutdown => {
+                #[cfg(feature = "logging")]
+                tracing::info!("shutdown signal received, draining connections");
+
+                break;
+            }
+        }
+    }
+
+    // Signal all connections to stop accepting new requests
+    let _ = shutdown_tx.send(true);
+
+    // Drain with timeout
+    let drain = async {
+        while connections.join_next().await.is_some() {}
+    };
+
+    match tokio::time::timeout(shutdown_timeout, drain).await {
+        Ok(()) => {
+            #[cfg(feature = "logging")]
+            tracing::info!("all connections drained, shutting down");
+        }
+        Err(_) => {
+            #[cfg(feature = "logging")]
+            {
+                let remaining = connections.len();
+                tracing::warn!(
+                    "shutdown timeout reached, dropping {remaining} remaining connection(s)"
+                );
+            }
+
+            connections.abort_all();
+        }
     }
 }
 
@@ -250,13 +316,116 @@ mod tests {
 
         let handle = tokio::spawn(async move {
             let (router, state, middleware) = app.into_parts();
-            serve(router, listener, Arc::new(state), middleware).await;
+            serve(
+                router,
+                listener,
+                Arc::new(state),
+                middleware,
+                std::future::pending::<()>(),
+                std::time::Duration::from_secs(30),
+            )
+            .await;
         });
 
         // Give the server a moment to start accepting connections
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         (base_url, handle)
+    }
+
+    #[tokio::test]
+    async fn serve_stops_accepting_on_shutdown() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let router = Router::new();
+        let state = Arc::new(TypeMap::new());
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+        let handle = tokio::spawn(async move {
+            serve(
+                router,
+                listener,
+                state,
+                vec![],
+                async {
+                    rx.await.ok();
+                },
+                std::time::Duration::from_secs(5),
+            )
+            .await;
+        });
+
+        // Send shutdown signal
+        tx.send(()).unwrap();
+
+        // serve() should return
+        tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+            .await
+            .expect("serve did not return after shutdown signal")
+            .expect("serve task panicked");
+    }
+
+    #[tokio::test]
+    async fn in_flight_request_completes_during_shutdown() {
+        let app = App::new().get("/slow", |_req: crate::request::Request| async {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            "done"
+        });
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+        let (router, state, middleware) = app.into_parts();
+        let handle = tokio::spawn(async move {
+            serve(
+                router,
+                listener,
+                Arc::new(state),
+                middleware,
+                async {
+                    rx.await.ok();
+                },
+                std::time::Duration::from_secs(5),
+            )
+            .await;
+        });
+
+        // Wait for server to be ready
+        loop {
+            match tokio::net::TcpStream::connect(&addr).await {
+                Ok(_) => break,
+                Err(_) => tokio::task::yield_now().await,
+            }
+        }
+
+        // Start a slow request on its own task so it actually begins
+        // polling (a bare future does nothing until awaited or spawned).
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}/slow");
+        let resp_task = tokio::spawn(async move { client.get(&url).send().await });
+
+        // Brief pause to let the request reach the handler
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Trigger shutdown while request is in flight
+        tx.send(()).unwrap();
+
+        // The slow request should still complete
+        let resp = tokio::time::timeout(std::time::Duration::from_secs(3), resp_task)
+            .await
+            .expect("response timed out")
+            .expect("request task panicked")
+            .expect("request failed");
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.unwrap(), "done");
+
+        // Server should exit cleanly
+        tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+            .await
+            .expect("serve did not return")
+            .expect("serve panicked");
     }
 
     #[tokio::test]

@@ -424,7 +424,15 @@ impl App {
 
             println!("Ladoo listening on http://{addr}");
             let (router, state, middleware) = self.into_parts();
-            crate::server::serve(router, listener, std::sync::Arc::new(state), middleware).await;
+            crate::server::serve(
+                router,
+                listener,
+                std::sync::Arc::new(state),
+                middleware,
+                crate::shutdown::shutdown_signal(),
+                std::time::Duration::from_secs(30),
+            )
+            .await;
         });
     }
 
@@ -463,7 +471,15 @@ impl App {
         self.inject_builtin_middleware();
 
         let (router, state, middleware) = self.into_parts();
-        crate::server::serve(router, listener, std::sync::Arc::new(state), middleware).await;
+        crate::server::serve(
+            router,
+            listener,
+            std::sync::Arc::new(state),
+            middleware,
+            crate::shutdown::shutdown_signal(),
+            std::time::Duration::from_secs(30),
+        )
+        .await;
     }
 
     /// Prepend the built-in request ID and request logger middleware to

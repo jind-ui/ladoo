@@ -263,7 +263,15 @@ impl TestServer {
         let base_url = format!("http://{addr}");
 
         let handle = tokio::spawn(async move {
-            crate::server::serve(router, listener, Arc::new(state), global_middleware).await;
+            crate::server::serve(
+                router,
+                listener,
+                Arc::new(state),
+                global_middleware,
+                std::future::pending::<()>(),
+                std::time::Duration::from_secs(30),
+            )
+            .await;
         });
 
         loop {

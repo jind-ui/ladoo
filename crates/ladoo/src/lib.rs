@@ -301,6 +301,7 @@ pub mod request;
 pub mod response;
 pub mod router;
 pub mod secure_headers;
+pub(crate) mod shutdown;
 pub mod state;
 pub mod testing;
 pub(crate) mod server;
