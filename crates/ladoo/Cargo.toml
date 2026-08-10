@@ -9,8 +9,9 @@ keywords = ["web", "framework", "http", "server", "async"]
 categories = ["web-programming::http-server"]
 
 [features]
-default = ["json", "macros", "config"]
+default = ["json", "macros", "config", "logging"]
 json = ["dep:serde", "dep:serde_json", "dep:serde_urlencoded"]
+logging = ["dep:tracing", "dep:tracing-subscriber", "dep:uuid"]
 macros = ["dep:ladoo-macros"]
 test-server = ["dep:reqwest"]
 config = ["dep:toml"]
@@ -28,6 +29,9 @@ serde_urlencoded = { version = "0.7", optional = true }
 reqwest = { version = "0.12", features = ["json"], optional = true }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net"] }
 toml = { version = "0.8", optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"], optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }

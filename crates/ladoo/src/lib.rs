@@ -257,6 +257,8 @@ pub mod context;
 pub mod error;
 pub mod extract;
 pub mod handler;
+#[cfg(feature = "logging")]
+pub mod logging;
 pub mod middleware;
 pub mod prelude;
 pub mod request;
