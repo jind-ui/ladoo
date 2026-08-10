@@ -28,5 +28,10 @@ pub use crate::request::Request;
 pub use crate::response::{Html, IntoResponse, Response};
 pub use crate::router::Router;
 pub use crate::state::State;
+pub use crate::config::Environment;
+#[cfg(feature = "config")]
+pub use crate::config::{Config, ConfigError};
+#[cfg(all(feature = "macros", feature = "config"))]
+pub use crate::Config as Config;
 pub use crate::testing::TestClient;
 pub use http::StatusCode;

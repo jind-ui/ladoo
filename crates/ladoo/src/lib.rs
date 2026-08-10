@@ -148,6 +148,35 @@
 //!     .run("0.0.0.0:3000");
 //! ```
 //!
+//! ## Configuration
+//!
+//! Define typed config structs with `#[derive(Config)]`. Values are
+//! resolved from environment variables → TOML files → defaults:
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! #[derive(Config)]
+//! struct AppConfig {
+//!     #[config(default = 3000)]
+//!     port: u16,
+//!     #[config(env = "DATABASE_URL")]
+//!     database_url: String,
+//!     pool_size: Option<u32>,
+//! }
+//!
+//! App::new()
+//!     .config::<AppConfig>()
+//!     .get("/", |cfg: State<AppConfig>| {
+//!         format!("Running on port {}", cfg.port)
+//!     })
+//!     .run("0.0.0.0:3000");
+//! ```
+//!
+//! TOML files are read from `config/default.toml` and
+//! `config/{environment}.toml` in the working directory. The
+//! environment is detected from `LADOO_ENV` or `APP_ENV`.
+//!
 //! ## Middleware
 //!
 //! Middleware functions wrap the request/response pipeline. Each

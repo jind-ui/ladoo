@@ -103,6 +103,47 @@ impl App {
         self
     }
 
+    /// Load configuration and provide it as application state.
+    ///
+    /// Calls [`Config::load()`](crate::config::Config::load) to read from environment variables,
+    /// TOML files, and field defaults, then registers the result as
+    /// [`State<T>`](crate::state::State). Panics at startup if
+    /// configuration loading fails — a misconfigured app should never
+    /// accept traffic.
+    ///
+    /// Users who prefer manual configuration can skip this method and
+    /// call [`.provide()`](Self::provide) directly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ladoo::prelude::*;
+    ///
+    /// #[derive(Config)]
+    /// struct AppConfig {
+    ///     #[config(default = 3000)]
+    ///     port: u16,
+    /// }
+    ///
+    /// App::new()
+    ///     .config::<AppConfig>()
+    ///     .get("/", |cfg: State<AppConfig>| {
+    ///         format!("port: {}", cfg.port)
+    ///     })
+    ///     .run("0.0.0.0:3000");
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`Config::load()`](crate::config::Config::load) returns an error.
+    #[cfg(feature = "config")]
+    pub fn config<T: crate::config::Config>(self) -> Self {
+        let config = T::load().unwrap_or_else(|e| {
+            panic!("configuration error: {e}");
+        });
+        self.provide(config)
+    }
+
     /// Register a handler for GET requests to the given path.
     pub fn get<H, M>(mut self, path: &str, handler: H) -> Self
     where
@@ -538,5 +579,54 @@ mod tests {
         let app = App::new().mount("/api", api);
         let (router, _, _) = app.into_parts();
         assert!(router.find(&Method::GET, "/api/items").is_some());
+    }
+
+    #[cfg(feature = "config")]
+    mod config_tests {
+        use super::*;
+        use crate::config::{Config, ConfigError};
+
+        struct TestConfig {
+            port: u16,
+        }
+
+        impl Config for TestConfig {
+            fn load() -> std::result::Result<Self, ConfigError> {
+                Ok(TestConfig { port: 9090 })
+            }
+        }
+
+        #[test]
+        fn config_provides_as_state() {
+            let app = App::new().config::<TestConfig>();
+            let (_, state, _) = app.into_parts();
+            assert_eq!(state.get::<TestConfig>().unwrap().port, 9090);
+        }
+
+        struct FailConfig;
+        impl Config for FailConfig {
+            fn load() -> std::result::Result<Self, ConfigError> {
+                Err(ConfigError::MissingField {
+                    field: "required",
+                    expected_type: "String",
+                })
+            }
+        }
+
+        #[test]
+        #[should_panic(expected = "configuration error")]
+        fn config_panics_on_error() {
+            let _app = App::new().config::<FailConfig>();
+        }
+
+        #[test]
+        fn config_chains_with_routes() {
+            let app = App::new()
+                .config::<TestConfig>()
+                .get("/", |_req: Request| "hello");
+            let (router, state, _) = app.into_parts();
+            assert!(router.find(&Method::GET, "/").is_some());
+            assert_eq!(state.get::<TestConfig>().unwrap().port, 9090);
+        }
     }
 }
