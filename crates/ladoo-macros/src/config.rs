@@ -315,6 +315,20 @@ mod tests {
     }
 
     #[test]
+    fn handles_option_with_env() {
+        let input: TokenStream = quote! {
+            struct AppConfig {
+                #[config(env = "POOL_SIZE")]
+                pool_size: Option<u32>,
+            }
+        };
+        let output = derive(input).to_string();
+        assert!(output.contains("POOL_SIZE"));
+        assert!(output.contains("None"));
+        assert!(!output.contains("MissingField"));
+    }
+
+    #[test]
     fn handles_string_default() {
         let input: TokenStream = quote! {
             struct AppConfig {
