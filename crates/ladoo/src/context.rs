@@ -98,9 +98,10 @@ impl Context {
     }
 
     /// Read a value from per-request state.
-    // Consumed by the request logger middleware (Task 5); only
-    // exercised by tests until then.
-    #[allow(dead_code)]
+    ///
+    /// Only called by the `logging` feature's request logger today; when
+    /// that feature is disabled this method has no non-test callers.
+    #[cfg_attr(not(feature = "logging"), allow(dead_code))]
     pub(crate) fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
         self.request.per_request().get::<T>()
     }

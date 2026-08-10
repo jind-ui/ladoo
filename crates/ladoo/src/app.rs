@@ -397,9 +397,13 @@ impl App {
     /// # Panics
     ///
     /// Panics if the Tokio runtime cannot be created or the address cannot be bound.
-    pub fn run(self, addr: &str) {
+    #[cfg_attr(not(feature = "logging"), allow(unused_mut))]
+    pub fn run(mut self, addr: &str) {
         #[cfg(feature = "logging")]
         crate::logging::init_subscriber(&self.logging_config);
+
+        #[cfg(feature = "logging")]
+        self.inject_builtin_middleware();
 
         let rt = tokio::runtime::Runtime::new().expect("failed to create Tokio runtime");
 
@@ -438,9 +442,37 @@ impl App {
     ///         .await;
     /// }
     /// ```
-    pub async fn serve_listener(self, listener: TcpListener) {
+    #[cfg_attr(not(feature = "logging"), allow(unused_mut))]
+    pub async fn serve_listener(mut self, listener: TcpListener) {
+        #[cfg(feature = "logging")]
+        self.inject_builtin_middleware();
+
         let (router, state, middleware) = self.into_parts();
         crate::server::serve(router, listener, std::sync::Arc::new(state), middleware).await;
+    }
+
+    /// Prepend the built-in request ID and request logger middleware to
+    /// the global middleware stack, when request logging is enabled.
+    ///
+    /// Called by [`App::run`] and [`App::serve_listener`] only — the
+    /// in-memory test helpers ([`App::into_client`] and [`App::spawn`])
+    /// skip this so tests control their own middleware stack.
+    #[cfg(feature = "logging")]
+    fn inject_builtin_middleware(&mut self) {
+        if !self.logging_config.request_logging {
+            return;
+        }
+
+        let header = std::mem::take(&mut self.logging_config.request_id_header);
+        let mut built_in: Vec<Arc<dyn Middleware>> = vec![
+            Arc::new(crate::logging::RequestIdMiddleware::new(header)),
+            Arc::new(
+                crate::logging::request_logger
+                    as fn(crate::context::Context, crate::middleware::Next) -> _,
+            ),
+        ];
+        built_in.append(&mut self.global_middleware);
+        self.global_middleware = built_in;
     }
 }
 
@@ -665,6 +697,54 @@ mod tests {
     fn log_level_default_is_none() {
         let app = App::new();
         assert!(app.logging_config.level.is_none());
+    }
+
+    #[cfg(feature = "logging")]
+    #[tokio::test]
+    async fn auto_injects_request_id_middleware() {
+        let app = App::test().get("/", |_req: crate::request::Request| "hello");
+        let client = app.into_client();
+        let resp = client.get("/").send().await;
+        assert_eq!(resp.status(), 200);
+        // into_client does NOT auto-inject — this tests the negative case
+        assert!(resp.header("x-request-id").is_none());
+    }
+
+    #[cfg(feature = "logging")]
+    #[tokio::test]
+    async fn disable_request_logging_skips_middleware() {
+        let app = App::test()
+            .disable_request_logging()
+            .get("/", |_req: crate::request::Request| "hello");
+        let (_, _, middleware) = app.into_parts();
+        // No built-in middleware when disabled
+        assert!(middleware.is_empty());
+    }
+
+    #[cfg(feature = "logging")]
+    #[test]
+    fn inject_builtin_middleware_prepends_request_id_and_logger() {
+        async fn noop(
+            ctx: crate::context::Context,
+            next: crate::middleware::Next,
+        ) -> crate::error::Result<crate::response::Response> {
+            next.run(ctx).await
+        }
+        let mut app = App::new().use_mw(noop);
+        assert_eq!(app.global_middleware.len(), 1);
+        app.inject_builtin_middleware();
+        // Two built-in middleware (request ID + logger) prepended before
+        // the user's `noop` middleware.
+        assert_eq!(app.global_middleware.len(), 3);
+    }
+
+    #[cfg(feature = "logging")]
+    #[test]
+    fn inject_builtin_middleware_is_noop_when_disabled() {
+        let mut app = App::new().disable_request_logging();
+        assert!(app.global_middleware.is_empty());
+        app.inject_builtin_middleware();
+        assert!(app.global_middleware.is_empty());
     }
 
     #[cfg(feature = "config")]

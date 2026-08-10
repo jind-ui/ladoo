@@ -129,16 +129,12 @@ impl std::fmt::Display for RequestId {
 /// value is reused. Otherwise a UUID v4 is generated. The ID is
 /// stored in per-request state as [`RequestId`] and added to the
 /// response headers.
-// Wired into `App`'s default middleware stack in a later phase task;
-// only exercised by tests until then.
-#[allow(dead_code)]
 pub(crate) struct RequestIdMiddleware {
     header: String,
 }
 
 impl RequestIdMiddleware {
     /// Create a new request ID middleware with the given header name.
-    #[allow(dead_code)]
     pub(crate) fn new(header: String) -> Self {
         Self { header }
     }
@@ -168,6 +164,61 @@ impl Middleware for RequestIdMiddleware {
             Ok(resp)
         })
     }
+}
+
+/// Request logging middleware.
+///
+/// Creates a tracing span for each request containing the HTTP method,
+/// path, and request ID. After the handler responds, emits an INFO
+/// event with the status code and duration (or an ERROR event if the
+/// chain returned an error).
+///
+/// Runs after [`RequestIdMiddleware`] in the chain so the request ID
+/// is available in the span.
+pub(crate) async fn request_logger(ctx: Context, next: Next) -> Result<Response, Error> {
+    use tracing::Instrument;
+
+    let method = ctx.method().to_string();
+    let path = ctx.path().to_string();
+    let request_id = ctx
+        .get::<RequestId>()
+        .map(|id| id.0.clone())
+        .unwrap_or_default();
+
+    let span = tracing::info_span!(
+        "request",
+        method = %method,
+        path = %path,
+        request_id = %request_id,
+    );
+
+    let start = std::time::Instant::now();
+    let result = next.run(ctx).instrument(span.clone()).await;
+    let duration_ms = start.elapsed().as_millis();
+
+    match &result {
+        Ok(resp) => {
+            span.in_scope(|| {
+                tracing::info!(
+                    status = resp.status().as_u16(),
+                    duration_ms = duration_ms as u64,
+                    "{method} {path} \u{2190} {} ({duration_ms}ms)",
+                    resp.status()
+                );
+            });
+        }
+        Err(err) => {
+            span.in_scope(|| {
+                tracing::error!(
+                    duration_ms = duration_ms as u64,
+                    error = %err,
+                    "{method} {path} \u{2190} ERROR ({duration_ms}ms)"
+                );
+            });
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -395,5 +446,67 @@ mod tests {
             .unwrap();
         assert!(resp.headers().contains_key("x-trace-id"));
         assert!(!resp.headers().contains_key("x-request-id"));
+    }
+
+    #[tokio::test]
+    async fn request_logger_passes_through() {
+        let handler: Arc<dyn crate::handler::Handler> =
+            (|_req: Request| "ok").into_handler().into();
+        let mw: Vec<Arc<dyn crate::middleware::Middleware>> =
+            vec![Arc::new(request_logger as fn(Context, Next) -> _)];
+        let req = Request::test(Method::GET, "/test");
+        let mut ctx = Context::new(req);
+        ctx.provide(RequestId("test-id".to_string()));
+        let resp = middleware::run_middleware_chain(&mw, handler, ctx)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        assert_eq!(resp.body_bytes(), b"ok");
+    }
+
+    #[tokio::test]
+    async fn request_logger_works_without_request_id() {
+        let handler: Arc<dyn crate::handler::Handler> =
+            (|_req: Request| "ok").into_handler().into();
+        let mw: Vec<Arc<dyn crate::middleware::Middleware>> =
+            vec![Arc::new(request_logger as fn(Context, Next) -> _)];
+        let ctx = Context::new(Request::test(Method::POST, "/users"));
+        let resp = middleware::run_middleware_chain(&mw, handler, ctx)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn request_id_and_logger_combined() {
+        let id_mw = RequestIdMiddleware::new("x-request-id".to_string());
+        let handler: Arc<dyn crate::handler::Handler> =
+            (|_req: Request| "ok").into_handler().into();
+        let mw: Vec<Arc<dyn crate::middleware::Middleware>> = vec![
+            Arc::new(id_mw),
+            Arc::new(request_logger as fn(Context, Next) -> _),
+        ];
+        let ctx = Context::new(Request::test(Method::GET, "/"));
+        let resp = middleware::run_middleware_chain(&mw, handler, ctx)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        assert!(resp.headers().contains_key("x-request-id"));
+    }
+
+    #[tokio::test]
+    async fn request_logger_reports_error_status() {
+        async fn blocker(_ctx: Context, _next: Next) -> Result<Response, Error> {
+            Err(crate::error::Error::internal("boom"))
+        }
+        let handler: Arc<dyn crate::handler::Handler> =
+            (|_req: Request| "unreachable").into_handler().into();
+        let mw: Vec<Arc<dyn crate::middleware::Middleware>> = vec![
+            Arc::new(request_logger as fn(Context, Next) -> _),
+            Arc::new(blocker as fn(Context, Next) -> _),
+        ];
+        let ctx = Context::new(Request::test(Method::GET, "/"));
+        let result = middleware::run_middleware_chain(&mw, handler, ctx).await;
+        assert!(result.is_err());
     }
 }
