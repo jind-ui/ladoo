@@ -206,6 +206,144 @@ mod tests {
         assert!(main.find(&Method::GET, "/users").is_some());
         assert!(main.find(&Method::GET, "/users/42").is_some());
     }
+
+    #[test]
+    fn find_wildcard_route() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/assets/*path", dummy_handler());
+
+        let m = router.find(&Method::GET, "/assets/css/style.css").unwrap();
+        assert_eq!(m.params, vec![("path".into(), "css/style.css".into())]);
+    }
+
+    #[test]
+    #[should_panic(expected = "wildcard segment '*path' must be the last segment")]
+    fn wildcard_not_last_segment_panics() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/files/*path/edit", dummy_handler());
+    }
+
+    #[test]
+    #[should_panic(expected = "wildcard segment must have a name")]
+    fn unnamed_wildcard_panics() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/files/*", dummy_handler());
+    }
+
+    #[test]
+    fn wildcard_captures_deeply_nested_path() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/files/*path", dummy_handler());
+
+        let m = router.find(&Method::GET, "/files/a/b/c/d.txt").unwrap();
+        assert_eq!(m.params, vec![("path".into(), "a/b/c/d.txt".into())]);
+    }
+
+    #[test]
+    fn wildcard_captures_empty_when_no_trailing_segments() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/assets/*path", dummy_handler());
+
+        let m = router.find(&Method::GET, "/assets").unwrap();
+        assert_eq!(m.params, vec![("path".into(), "".into())]);
+    }
+
+    #[test]
+    fn wildcard_captures_empty_with_trailing_slash() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/assets/*path", dummy_handler());
+
+        let m = router.find(&Method::GET, "/assets/").unwrap();
+        assert_eq!(m.params, vec![("path".into(), "".into())]);
+    }
+
+    #[test]
+    fn global_catch_all_wildcard() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/*catchall", dummy_handler());
+
+        let m = router.find(&Method::GET, "/any/nested/path").unwrap();
+        assert_eq!(
+            m.params,
+            vec![("catchall".into(), "any/nested/path".into())],
+        );
+    }
+
+    #[test]
+    fn global_catch_all_matches_root() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/*catchall", dummy_handler());
+
+        let m = router.find(&Method::GET, "/").unwrap();
+        assert_eq!(m.params, vec![("catchall".into(), "".into())]);
+    }
+
+    #[test]
+    fn param_before_wildcard() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/api/:version/*rest", dummy_handler());
+
+        let m = router.find(&Method::GET, "/api/v2/users/42").unwrap();
+        assert_eq!(
+            m.params,
+            vec![
+                ("version".into(), "v2".into()),
+                ("rest".into(), "users/42".into()),
+            ],
+        );
+    }
+
+    #[test]
+    fn static_route_beats_wildcard() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/*path", dummy_handler());
+        router.add(Method::GET, "/health", dummy_handler());
+
+        let m = router.find(&Method::GET, "/health").unwrap();
+        assert!(m.params.is_empty());
+    }
+
+    #[test]
+    fn param_route_beats_wildcard() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/*path", dummy_handler());
+        router.add(Method::GET, "/users/:id", dummy_handler());
+
+        let m = router.find(&Method::GET, "/users/42").unwrap();
+        assert_eq!(m.params, vec![("id".into(), "42".into())]);
+    }
+
+    #[test]
+    fn static_prefix_beats_wildcard_prefix() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/assets/*path", dummy_handler());
+        router.add(
+            Method::GET,
+            "/assets/favicon.ico",
+            dummy_handler(),
+        );
+
+        let m = router.find(&Method::GET, "/assets/favicon.ico").unwrap();
+        assert!(m.params.is_empty());
+    }
+
+    #[test]
+    fn wildcard_no_match_wrong_prefix() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/assets/*path", dummy_handler());
+
+        assert!(router.find(&Method::GET, "/other/file.js").is_none());
+    }
+
+    #[test]
+    fn merge_from_preserves_wildcard_routes() {
+        let sub = Router::new().get("/static/*path", dummy_handler_fn);
+        let mut main = Router::new();
+        main.merge_from("/cdn", sub);
+
+        let m = main.find(&Method::GET, "/cdn/static/js/app.js").unwrap();
+        assert_eq!(m.params, vec![("path".into(), "js/app.js".into())]);
+    }
 }
 
 /// A matched route, containing the handler, extracted path parameters, and
@@ -221,13 +359,17 @@ pub struct RouteMatch<'a> {
     pub middleware: &'a [Arc<dyn Middleware>],
 }
 
-/// A path segment pattern — either a literal string or a named parameter.
+/// A path segment pattern — either a literal string, a named parameter, or
+/// a wildcard catch-all.
 #[derive(Debug, Clone)]
 enum Segment {
     /// Matches a specific string exactly (e.g., `users`).
     Static(String),
     /// Captures any string and binds it to a name (e.g., `:id` → `id`).
     Param(String),
+    /// Captures all remaining path segments, joined with `/`.
+    /// Must be the last segment in the pattern (e.g., `*path`).
+    Wildcard(String),
 }
 
 /// A registered route: method + path pattern + handler + middleware.
@@ -321,18 +463,35 @@ impl Router {
         })
     }
 
-    /// Parse a path pattern like `/users/:id` into segments.
+    /// Parse a path pattern like `/users/:id` or `/assets/*path` into segments.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a wildcard segment (`*name`) is not the last segment in the
+    /// pattern, or if a wildcard has no name (bare `*`).
     fn parse_path(path: &str) -> Vec<Segment> {
-        Self::split_path(path)
-            .into_iter()
-            .map(|s| {
-                if let Some(name) = s.strip_prefix(':') {
-                    Segment::Param(name.to_string())
-                } else {
-                    Segment::Static(s.to_string())
+        let parts: Vec<&str> = Self::split_path(path);
+        let mut segments = Vec::with_capacity(parts.len());
+
+        for (i, s) in parts.iter().enumerate() {
+            if let Some(name) = s.strip_prefix('*') {
+                if name.is_empty() {
+                    panic!("wildcard segment must have a name (e.g., '*path')");
                 }
-            })
-            .collect()
+                if i != parts.len() - 1 {
+                    panic!(
+                        "wildcard segment '*{name}' must be the last segment in path pattern"
+                    );
+                }
+                segments.push(Segment::Wildcard(name.to_string()));
+            } else if let Some(name) = s.strip_prefix(':') {
+                segments.push(Segment::Param(name.to_string()));
+            } else {
+                segments.push(Segment::Static(s.to_string()));
+            }
+        }
+
+        segments
     }
 
     /// Split a path string into non-empty segments.
@@ -348,23 +507,38 @@ impl Router {
         pattern: &[Segment],
         path: &[&str],
     ) -> Option<(PathParams, usize)> {
-        if pattern.len() != path.len() {
-            return None;
+        let has_wildcard = matches!(pattern.last(), Some(Segment::Wildcard(_)));
+
+        if has_wildcard {
+            // Wildcard: path must have at least (pattern.len() - 1) segments
+            if path.len() < pattern.len() - 1 {
+                return None;
+            }
+        } else {
+            // No wildcard: exact segment count required
+            if pattern.len() != path.len() {
+                return None;
+            }
         }
 
         let mut params = Vec::new();
         let mut static_count = 0;
 
-        for (segment, value) in pattern.iter().zip(path.iter()) {
+        for (i, segment) in pattern.iter().enumerate() {
             match segment {
                 Segment::Static(expected) => {
-                    if expected != value {
+                    if path.get(i).map_or(true, |v| v != expected) {
                         return None;
                     }
                     static_count += 1;
                 }
                 Segment::Param(name) => {
+                    let value = path.get(i)?;
                     params.push((name.clone(), (*value).to_string()));
+                }
+                Segment::Wildcard(name) => {
+                    let tail = &path[i..];
+                    params.push((name.clone(), tail.join("/")));
                 }
             }
         }
@@ -467,6 +641,7 @@ fn format_prefixed_path(prefix: &str, segments: &[Segment]) -> String {
         .map(|s| match s {
             Segment::Static(v) => format!("/{v}"),
             Segment::Param(v) => format!("/:{v}"),
+            Segment::Wildcard(v) => format!("/*{v}"),
         })
         .collect();
     let prefix = prefix.trim_end_matches('/');
