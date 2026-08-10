@@ -577,7 +577,7 @@ mod tests {
         let app = App::new()
             .provide(42_u32)
             .provide(String::from("hello"))
-            .provide(3.14_f64);
+            .provide(2.72_f64);
         let _ = app.into_router();
     }
 
