@@ -388,6 +388,11 @@ impl App {
     /// [`disable_request_logging`](App::disable_request_logging) to turn
     /// this off.
     ///
+    /// The server shuts down gracefully on `SIGTERM` or Ctrl-C (`SIGINT`):
+    /// it stops accepting new connections and gives in-flight requests up
+    /// to 30 seconds to finish before returning (in a future release, this
+    /// window will be configurable via `shutdown_timeout()`).
+    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -446,6 +451,11 @@ impl App {
     /// request ID generation and request logging. Call
     /// [`disable_request_logging`](App::disable_request_logging) to turn
     /// this off.
+    ///
+    /// The server shuts down gracefully on `SIGTERM` or Ctrl-C (`SIGINT`):
+    /// it stops accepting new connections and gives in-flight requests up
+    /// to 30 seconds to finish before returning (in a future release, this
+    /// window will be configurable via `shutdown_timeout()`).
     ///
     /// # Examples
     ///

@@ -429,6 +429,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shutdown_aborts_connections_past_timeout() {
+        // Handler sleeps far longer than the shutdown_timeout below, so the
+        // connection can never drain cleanly — this exercises the
+        // `Err(_) => { connections.abort_all(); }` branch in `serve()`.
+        let app = App::new().get("/slow", |_req: crate::request::Request| async {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            "done"
+        });
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+        let (router, state, middleware) = app.into_parts();
+        let handle = tokio::spawn(async move {
+            serve(
+                router,
+                listener,
+                Arc::new(state),
+                middleware,
+                async {
+                    rx.await.ok();
+                },
+                std::time::Duration::from_millis(200),
+            )
+            .await;
+        });
+
+        // Wait for server to be ready
+        loop {
+            match tokio::net::TcpStream::connect(&addr).await {
+                Ok(_) => break,
+                Err(_) => tokio::task::yield_now().await,
+            }
+        }
+
+        // Start a slow request on its own task so it's genuinely in flight
+        // (a bare future does nothing until awaited or spawned). It will
+        // never finish before the server gives up on it.
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}/slow");
+        let _resp_task = tokio::spawn(async move { client.get(&url).send().await });
+
+        // Brief pause to let the request reach the handler
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Trigger shutdown — the handler needs ~4.95s more to finish, but
+        // shutdown_timeout is only 200ms.
+        tx.send(()).unwrap();
+
+        // serve() must abort the stuck connection and return promptly —
+        // well under the handler's 5s sleep — rather than hanging until it
+        // finishes.
+        tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+            .await
+            .expect("serve did not return within the abort window")
+            .expect("serve panicked");
+    }
+
+    #[tokio::test]
     async fn serves_hello_world() {
         let app = App::new().get("/", |_req: crate::request::Request| "Hello World");
         let (url, handle) = start_test_server(app).await;
