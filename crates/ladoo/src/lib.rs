@@ -300,6 +300,7 @@ pub mod prelude;
 pub mod request;
 pub mod response;
 pub mod router;
+pub mod secure_headers;
 pub mod state;
 pub mod testing;
 pub(crate) mod server;
