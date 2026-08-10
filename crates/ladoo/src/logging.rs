@@ -18,6 +18,14 @@
 //! // Prod: {"timestamp":"...","level":"info","method":"GET","path":"/","status":200}
 //! ```
 
+use std::future::Future;
+use std::pin::Pin;
+
+use crate::context::Context;
+use crate::error::Error;
+use crate::middleware::{Middleware, Next};
+use crate::response::Response;
+
 /// Configuration for the logging system.
 ///
 /// Stored internally in [`App`](crate::app::App) and used to
@@ -115,9 +123,62 @@ impl std::fmt::Display for RequestId {
     }
 }
 
+/// Middleware that assigns a request ID to every request.
+///
+/// If the configured header is present on the incoming request, its
+/// value is reused. Otherwise a UUID v4 is generated. The ID is
+/// stored in per-request state as [`RequestId`] and added to the
+/// response headers.
+// Wired into `App`'s default middleware stack in a later phase task;
+// only exercised by tests until then.
+#[allow(dead_code)]
+pub(crate) struct RequestIdMiddleware {
+    header: String,
+}
+
+impl RequestIdMiddleware {
+    /// Create a new request ID middleware with the given header name.
+    #[allow(dead_code)]
+    pub(crate) fn new(header: String) -> Self {
+        Self { header }
+    }
+}
+
+impl Middleware for RequestIdMiddleware {
+    fn call(
+        &self,
+        ctx: Context,
+        next: Next,
+    ) -> Pin<Box<dyn Future<Output = Result<Response, Error>> + Send>> {
+        let header = self.header.clone();
+        Box::pin(async move {
+            let mut ctx = ctx;
+
+            let id = ctx
+                .headers()
+                .get(&header)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+            ctx.provide(RequestId(id.clone()));
+
+            let mut resp = next.run(ctx).await?;
+            resp.set_header(&header, &id);
+            Ok(resp)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::Context;
+    use crate::handler::IntoHandler;
+    use crate::middleware;
+    use crate::request::Request;
+    use http::Method;
+    use std::sync::Arc;
     use std::sync::Mutex;
 
     // `resolve_filter` reads `RUST_LOG` and `is_dev_format` reads
@@ -272,5 +333,67 @@ mod tests {
         let result = is_dev_format();
         std::env::remove_var("LADOO_ENV");
         assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn request_id_middleware_generates_uuid_when_no_header() {
+        let mw = RequestIdMiddleware::new("x-request-id".to_string());
+        let handler: Arc<dyn crate::handler::Handler> =
+            (|_req: Request| "ok").into_handler().into();
+        let mw_vec: Vec<Arc<dyn crate::middleware::Middleware>> = vec![Arc::new(mw)];
+        let ctx = Context::new(Request::test(Method::GET, "/"));
+        let resp = middleware::run_middleware_chain(&mw_vec, handler, ctx)
+            .await
+            .unwrap();
+        let id = resp.headers().get("x-request-id").unwrap().to_str().unwrap();
+        assert!(!id.is_empty());
+        assert!(uuid::Uuid::parse_str(id).is_ok());
+    }
+
+    #[tokio::test]
+    async fn request_id_middleware_uses_incoming_header() {
+        let mw = RequestIdMiddleware::new("x-request-id".to_string());
+        let handler: Arc<dyn crate::handler::Handler> =
+            (|_req: Request| "ok").into_handler().into();
+        let mw_vec: Vec<Arc<dyn crate::middleware::Middleware>> = vec![Arc::new(mw)];
+        let mut headers = http::HeaderMap::new();
+        headers.insert("x-request-id", "custom-123".parse().unwrap());
+        let req = Request::test_with_headers(Method::GET, "/", headers);
+        let ctx = Context::new(req);
+        let resp = middleware::run_middleware_chain(&mw_vec, handler, ctx)
+            .await
+            .unwrap();
+        let id = resp.headers().get("x-request-id").unwrap().to_str().unwrap();
+        assert_eq!(id, "custom-123");
+    }
+
+    #[tokio::test]
+    async fn request_id_middleware_makes_state_extractable() {
+        let mw = RequestIdMiddleware::new("x-request-id".to_string());
+        let handler: Arc<dyn crate::handler::Handler> =
+            (|id: crate::state::State<RequestId>| format!("id: {}", id.0))
+                .into_handler()
+                .into();
+        let mw_vec: Vec<Arc<dyn crate::middleware::Middleware>> = vec![Arc::new(mw)];
+        let ctx = Context::new(Request::test(Method::GET, "/"));
+        let resp = middleware::run_middleware_chain(&mw_vec, handler, ctx)
+            .await
+            .unwrap();
+        let body = std::str::from_utf8(resp.body_bytes()).unwrap();
+        assert!(body.starts_with("id: "));
+    }
+
+    #[tokio::test]
+    async fn request_id_middleware_custom_header() {
+        let mw = RequestIdMiddleware::new("x-trace-id".to_string());
+        let handler: Arc<dyn crate::handler::Handler> =
+            (|_req: Request| "ok").into_handler().into();
+        let mw_vec: Vec<Arc<dyn crate::middleware::Middleware>> = vec![Arc::new(mw)];
+        let ctx = Context::new(Request::test(Method::GET, "/"));
+        let resp = middleware::run_middleware_chain(&mw_vec, handler, ctx)
+            .await
+            .unwrap();
+        assert!(resp.headers().contains_key("x-trace-id"));
+        assert!(!resp.headers().contains_key("x-request-id"));
     }
 }
