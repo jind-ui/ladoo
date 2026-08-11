@@ -2,7 +2,18 @@
 //!
 //! This module provides the [`AuthProvider`] trait for implementing
 //! authentication, the [`Auth`] extractor for type-safe user access
-//! in handlers, and the [`HasRole`] trait for role-based authorization.
+//! in handlers, the [`AuthError`] type for auth failures, and the
+//! [`HasRole`] trait for role-based authorization.
+//!
+//! Built-in providers live in [`providers`] ([`providers::ApiKeyAuth`],
+//! and [`providers::JwtAuth`] behind the `auth-jwt` feature). Role and
+//! permission enforcement lives in [`rbac`] ([`rbac::Rbac`],
+//! [`rbac::RequireRole`], [`rbac::RequirePermission`],
+//! [`rbac::ResourcePolicy`]).
+//!
+//! All of the above — plus the [`async_trait`](crate::prelude::async_trait)
+//! re-export needed to implement [`AuthProvider`] — are available from
+//! [`ladoo::prelude`](crate::prelude) with a single `use ladoo::prelude::*;`.
 //!
 //! # Architecture
 //!
@@ -14,7 +25,8 @@
 //!    per-request state lookup — zero-cost beyond the HashMap get.
 //!
 //! An [`AuthProvider`] is wrapped in guard middleware and registered with
-//! [`.use_mw()`](crate::router::Router::use_mw) to protect a route or
+//! [`.guard()`](crate::router::Router::guard) (sugar over
+//! [`.use_mw()`](crate::router::Router::use_mw)) to protect a route or
 //! route group.
 
 pub mod providers;

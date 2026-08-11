@@ -310,6 +310,53 @@
 //! )
 //! ```
 //!
+//! ## Authentication
+//!
+//! Type-safe auth with compile-time enforcement. If a handler takes
+//! `Auth<User>`, authentication is guaranteed:
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! let api_key = ApiKeyAuth::new()
+//!     .key("secret", User { name: "Alice".into() });
+//!
+//! App::new()
+//!     .group("/api", |g| g
+//!         .guard(api_key)
+//!         .get("/me", |user: Auth<User>| user.name.clone())
+//!     )
+//! ```
+//!
+//! Optional auth with `Option<Auth<T>>`:
+//!
+//! ```rust,ignore
+//! async fn home(user: Option<Auth<User>>) -> String {
+//!     match user {
+//!         Some(u) => format!("Welcome back, {}", u.name),
+//!         None => "Welcome, guest".into(),
+//!     }
+//! }
+//! ```
+//!
+//! ## Authorization (RBAC)
+//!
+//! Three levels: role check, permission check, resource policy:
+//!
+//! ```rust,ignore
+//! let rbac = Rbac::new()
+//!     .role("editor", &["posts:read", "posts:write"])
+//!     .role("admin", &["*"]);
+//!
+//! App::new()
+//!     .provide(rbac)
+//!     .group("/admin", |g| g
+//!         .guard(jwt)
+//!         .use_mw(RequireRole::<Claims>::new("admin"))
+//!         .get("/stats", admin_stats)
+//!     )
+//! ```
+//!
 //! ## Graceful Shutdown
 //!
 //! The server listens for SIGTERM and SIGINT and drains in-flight

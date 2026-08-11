@@ -32,6 +32,12 @@ pub use crate::plugin::Plugin;
 #[cfg(feature = "json")]
 pub use crate::extract::Query;
 pub use crate::extract::{Valid, Validate};
+pub use crate::auth::{Auth, AuthError, AuthProvider, HasRole};
+pub use crate::auth::providers::ApiKeyAuth;
+pub use crate::auth::rbac::{Rbac, RequireRole, RequirePermission, ResourcePolicy};
+#[cfg(feature = "auth-jwt")]
+pub use crate::auth::providers::JwtAuth;
+pub use async_trait::async_trait;
 pub use crate::request::Request;
 #[cfg(feature = "logging")]
 pub use crate::logging::RequestId;
