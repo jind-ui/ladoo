@@ -83,8 +83,12 @@ impl fmt::Display for ValidationErrors {
         write!(f, "Validation failed")?;
         let mut fields: Vec<_> = self.0.iter().collect();
         fields.sort_by(|(a, _), (b, _)| a.cmp(b));
-        for (field, messages) in &fields {
-            write!(f, ": {}: {}", field, messages.join(", "))?;
+        for (i, (field, messages)) in fields.iter().enumerate() {
+            if i == 0 {
+                write!(f, ": {}: {}", field, messages.join(", "))?;
+            } else {
+                write!(f, "; {}: {}", field, messages.join(", "))?;
+            }
         }
         Ok(())
     }
