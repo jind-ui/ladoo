@@ -177,6 +177,67 @@ pub trait Validate {
     fn validate(&self) -> Result<(), ValidationErrors>;
 }
 
+#[cfg(feature = "validation")]
+impl ValidationErrors {
+    /// Convert from the `validator` crate's error type.
+    ///
+    /// Walks the error tree, extracting `message` from each
+    /// [`validator::ValidationError`] when present, falling back to the
+    /// error `code`. Nested struct errors are flattened with dot notation
+    /// (e.g., `"address.city"`).
+    pub fn from_validator_errors(errors: validator::ValidationErrors) -> Self {
+        let mut result = Self::new();
+        Self::flatten_validator_errors("", &errors, &mut result);
+        result
+    }
+
+    fn flatten_validator_errors(
+        prefix: &str,
+        errors: &validator::ValidationErrors,
+        result: &mut ValidationErrors,
+    ) {
+        for (field, kind) in errors.errors() {
+            let full_field = if prefix.is_empty() {
+                field.to_string()
+            } else {
+                format!("{prefix}.{field}")
+            };
+
+            match kind {
+                validator::ValidationErrorsKind::Field(field_errors) => {
+                    for error in field_errors {
+                        let message = error
+                            .message
+                            .as_ref()
+                            .map(|m| m.to_string())
+                            .unwrap_or_else(|| {
+                                format!("validation failed: {}", error.code)
+                            });
+                        result.add(full_field.clone(), message);
+                    }
+                }
+                validator::ValidationErrorsKind::Struct(nested) => {
+                    Self::flatten_validator_errors(&full_field, nested, result);
+                }
+                validator::ValidationErrorsKind::List(map) => {
+                    for (index, nested) in map {
+                        let indexed = format!("{full_field}[{index}]");
+                        Self::flatten_validator_errors(&indexed, nested, result);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "validation")]
+impl<T: validator::Validate> Validate for T {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        validator::Validate::validate(self)
+            .map_err(ValidationErrors::from_validator_errors)
+    }
+}
+
 /// Validation extractor — wraps any inner extractor, running validation
 /// after extraction.
 ///
@@ -645,5 +706,149 @@ mod tests {
         std::env::remove_var("LADOO_ENV");
         assert_eq!(resp.content_type(), Some("application/json"));
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[cfg(feature = "validation")]
+    mod validator_integration {
+        // Deliberately narrower than `use super::*;`: this module must NOT
+        // bring Ladoo's own `Validate` trait into scope. The `validator`
+        // crate's `#[validate(nested)]` expansion calls a nested field's
+        // `.validate()` unqualified, resolving against whatever `Validate`
+        // trait is in scope; if both Ladoo's blanket-impl `Validate` and
+        // `validator::Validate` were in scope here, that call would be
+        // ambiguous for any type covered by the blanket impl.
+        use super::{Valid, ValidationErrors};
+        use super::super::super::FromRequest;
+        use http::StatusCode;
+
+        #[test]
+        fn from_validator_errors_converts_simple_fields() {
+            #[derive(Debug, serde::Deserialize, validator::Validate)]
+            struct Input {
+                #[validate(length(min = 1, message = "must not be empty"))]
+                name: String,
+                #[validate(email(message = "must be a valid email"))]
+                email: String,
+            }
+
+            let input = Input {
+                name: String::new(),
+                email: "not-email".to_string(),
+            };
+            let result = validator::Validate::validate(&input);
+            assert!(result.is_err());
+            let ve = ValidationErrors::from_validator_errors(result.unwrap_err());
+            assert!(ve.field_errors().contains_key("name"));
+            assert!(ve.field_errors().contains_key("email"));
+        }
+
+        #[test]
+        fn from_validator_errors_uses_message_when_present() {
+            #[derive(Debug, serde::Deserialize, validator::Validate)]
+            struct Input {
+                #[validate(length(min = 1, message = "name is required"))]
+                name: String,
+            }
+
+            let input = Input { name: String::new() };
+            let result = validator::Validate::validate(&input);
+            let ve = ValidationErrors::from_validator_errors(result.unwrap_err());
+            assert!(
+                ve.field_errors()["name"]
+                    .iter()
+                    .any(|m| m.contains("name is required")),
+            );
+        }
+
+        #[test]
+        fn from_validator_errors_falls_back_to_code() {
+            #[derive(Debug, serde::Deserialize, validator::Validate)]
+            struct Input {
+                #[validate(email)]
+                email: String,
+            }
+
+            let input = Input { email: "bad".to_string() };
+            let result = validator::Validate::validate(&input);
+            let ve = ValidationErrors::from_validator_errors(result.unwrap_err());
+            let msgs = &ve.field_errors()["email"];
+            assert!(!msgs.is_empty());
+        }
+
+        #[test]
+        fn blanket_impl_works_with_valid_extractor() {
+            #[derive(Debug, serde::Deserialize, validator::Validate)]
+            struct CreateUser {
+                #[validate(length(min = 1))]
+                name: String,
+                #[validate(email)]
+                email: String,
+            }
+
+            let body = br#"{"name":"Alice","email":"alice@example.com"}"#;
+            let mut req = super::json_request(body);
+            let result = Valid::<super::super::super::Json<CreateUser>>::from_request(
+                &mut req,
+            );
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn blanket_impl_422_on_invalid() {
+            #[derive(Debug, serde::Deserialize, validator::Validate)]
+            struct CreateUser {
+                #[validate(length(min = 1))]
+                name: String,
+                #[validate(email)]
+                email: String,
+            }
+
+            let body = br#"{"name":"","email":"bad"}"#;
+            let mut req = super::json_request(body);
+            let result = Valid::<super::super::super::Json<CreateUser>>::from_request(
+                &mut req,
+            );
+            assert!(result.is_err());
+            assert_eq!(
+                result.unwrap_err().status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            );
+        }
+
+        #[test]
+        fn nested_struct_validation_dot_notation() {
+            // The `#[validate(nested)]` expansion calls the nested field's
+            // `.validate()` unqualified, so `validator::Validate` must be
+            // the only `Validate` trait in scope here (see module-level
+            // comment on the import list above).
+            use validator::Validate;
+
+            #[derive(Debug, serde::Deserialize, validator::Validate)]
+            struct Address {
+                #[validate(length(min = 1))]
+                city: String,
+            }
+
+            #[derive(Debug, serde::Deserialize, validator::Validate)]
+            struct User {
+                #[validate(length(min = 1))]
+                name: String,
+                #[validate(nested)]
+                address: Address,
+            }
+
+            let input = User {
+                name: String::new(),
+                address: Address { city: String::new() },
+            };
+            let result = validator::Validate::validate(&input);
+            let ve = ValidationErrors::from_validator_errors(result.unwrap_err());
+            assert!(
+                ve.field_errors().contains_key("address.city")
+                    || ve.field_errors().contains_key("city"),
+                "nested field should be present: {:?}",
+                ve.field_errors(),
+            );
+        }
     }
 }

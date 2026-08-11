@@ -15,6 +15,7 @@ logging = ["dep:tracing", "dep:tracing-subscriber", "dep:uuid"]
 macros = ["dep:ladoo-macros"]
 test-server = ["dep:reqwest"]
 config = ["dep:toml"]
+validation = ["dep:validator"]
 
 [dependencies]
 bytes = "1"
@@ -32,6 +33,7 @@ toml = { version = "0.8", optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"], optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
+validator = { version = "0.19", features = ["derive"], optional = true }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }
@@ -39,3 +41,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "time"] }
+validator = { version = "0.19", features = ["derive"] }
