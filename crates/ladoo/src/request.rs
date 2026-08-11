@@ -39,6 +39,7 @@ pub struct Request {
     body: Bytes,
     extensions: Arc<TypeMap>,
     per_request: TypeMap,
+    peer_ip: Option<String>,
 }
 
 impl Clone for Request {
@@ -51,6 +52,7 @@ impl Clone for Request {
             body: self.body.clone(),
             extensions: self.extensions.clone(),
             per_request: TypeMap::new(),
+            peer_ip: None,
         }
     }
 }
@@ -75,6 +77,7 @@ impl Request {
             body,
             extensions,
             per_request: TypeMap::new(),
+            peer_ip: None,
         }
     }
 
@@ -100,6 +103,7 @@ impl Request {
             body: Bytes::new(),
             extensions: Arc::new(TypeMap::new()),
             per_request: TypeMap::new(),
+            peer_ip: None,
         }
     }
 
@@ -126,6 +130,7 @@ impl Request {
             body: Bytes::copy_from_slice(body),
             extensions: Arc::new(TypeMap::new()),
             per_request: TypeMap::new(),
+            peer_ip: None,
         }
     }
 
@@ -157,6 +162,7 @@ impl Request {
             body: Bytes::new(),
             extensions: Arc::new(TypeMap::new()),
             per_request: TypeMap::new(),
+            peer_ip: None,
         }
     }
 
@@ -189,6 +195,7 @@ impl Request {
             body: Bytes::copy_from_slice(body),
             extensions: Arc::new(TypeMap::new()),
             per_request: TypeMap::new(),
+            peer_ip: None,
         }
     }
 
@@ -313,6 +320,23 @@ impl Request {
         Arc::get_mut(&mut self.extensions)
             .expect("provide_test_state: request state is shared, cannot mutate")
             .insert(value);
+    }
+
+    /// Returns the client's IP address, if known.
+    ///
+    /// This is set from the TCP socket peer address when running under
+    /// a real server. In-memory test requests return `None` unless
+    /// [`set_peer_ip`](Request::set_peer_ip) is called.
+    pub fn peer_ip(&self) -> Option<&str> {
+        self.peer_ip.as_deref()
+    }
+
+    /// Set the client's IP address.
+    ///
+    /// Called internally by the server after accepting a TCP connection.
+    /// Also available in tests to simulate different client IPs.
+    pub fn set_peer_ip(&mut self, ip: String) {
+        self.peer_ip = Some(ip);
     }
 }
 
@@ -451,5 +475,18 @@ mod tests {
         req.provide(42_u32);
         let mut cloned = req.clone();
         assert!(crate::state::State::<u32>::from_request(&mut cloned).is_err());
+    }
+
+    #[test]
+    fn peer_ip_returns_stored_ip() {
+        let mut req = Request::test(Method::GET, "/");
+        req.set_peer_ip("192.168.1.1".to_string());
+        assert_eq!(req.peer_ip(), Some("192.168.1.1"));
+    }
+
+    #[test]
+    fn peer_ip_returns_none_when_not_set() {
+        let req = Request::test(Method::GET, "/");
+        assert_eq!(req.peer_ip(), None);
     }
 }

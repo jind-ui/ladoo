@@ -69,7 +69,7 @@ pub(crate) async fn serve(
     loop {
         tokio::select! {
             result = listener.accept() => {
-                let (stream, _addr) = match result {
+                let (stream, addr) = match result {
                     Ok(conn) => conn,
                     Err(_) => continue,
                 };
@@ -84,13 +84,14 @@ pub(crate) async fn serve(
                     let router = router.clone();
                     let state = state.clone();
                     let global_mw = global_mw.clone();
+                    let addr = addr;
 
                     let service = service_fn(move |hyper_req: hyper::Request<hyper::body::Incoming>| {
                         let router = router.clone();
                         let state = state.clone();
                         let global_mw = global_mw.clone();
                         async move {
-                            let response = handle_request(&router, hyper_req, state, &global_mw).await;
+                            let response = handle_request(&router, hyper_req, state, &global_mw, addr).await;
                             Ok::<_, Infallible>(response)
                         }
                     });
@@ -190,6 +191,7 @@ async fn handle_request(
     hyper_req: hyper::Request<hyper::body::Incoming>,
     state: Arc<TypeMap>,
     global_middleware: &[Arc<dyn Middleware>],
+    peer_addr: std::net::SocketAddr,
 ) -> hyper::Response<Full<Bytes>> {
     let (parts, incoming) = hyper_req.into_parts();
 
@@ -204,7 +206,7 @@ async fn handle_request(
         }
     };
 
-    let request = Request::new(
+    let mut request = Request::new(
         parts.method,
         parts.uri,
         parts.headers,
@@ -212,6 +214,7 @@ async fn handle_request(
         body,
         state,
     );
+    request.set_peer_ip(peer_addr.ip().to_string());
 
     handle_app_request(router, request, global_middleware)
         .await

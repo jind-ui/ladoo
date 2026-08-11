@@ -114,6 +114,14 @@ impl Context {
     pub(crate) fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
         self.request.per_request().get::<T>()
     }
+
+    /// Returns the client's IP address, if known.
+    ///
+    /// Available when the request came through the TCP server. Returns
+    /// `None` for in-memory test requests unless explicitly set.
+    pub fn peer_ip(&self) -> Option<&str> {
+        self.request.peer_ip()
+    }
 }
 
 #[cfg(test)]
@@ -214,5 +222,20 @@ mod tests {
         let req = Request::test(Method::GET, "/");
         let ctx = Context::new(req);
         assert_eq!(ctx.get::<u32>(), None);
+    }
+
+    #[test]
+    fn peer_ip_delegates_to_request() {
+        let mut req = Request::test(Method::GET, "/");
+        req.set_peer_ip("10.0.0.1".to_string());
+        let ctx = Context::new(req);
+        assert_eq!(ctx.peer_ip(), Some("10.0.0.1"));
+    }
+
+    #[test]
+    fn peer_ip_returns_none_without_ip() {
+        let req = Request::test(Method::GET, "/");
+        let ctx = Context::new(req);
+        assert_eq!(ctx.peer_ip(), None);
     }
 }

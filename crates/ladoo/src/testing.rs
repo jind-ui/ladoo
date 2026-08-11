@@ -96,6 +96,7 @@ pub struct TestRequest<'a> {
     path: String,
     headers: HeaderMap,
     body: Bytes,
+    peer_ip: Option<String>,
 }
 
 impl<'a> TestRequest<'a> {
@@ -106,7 +107,16 @@ impl<'a> TestRequest<'a> {
             path: path.to_string(),
             headers: HeaderMap::new(),
             body: Bytes::new(),
+            peer_ip: None,
         }
+    }
+
+    /// Set a simulated client IP address for the request.
+    ///
+    /// Used to test IP-based rate limiting and other IP-dependent middleware.
+    pub fn peer_ip(mut self, ip: &str) -> Self {
+        self.peer_ip = Some(ip.to_string());
+        self
     }
 
     /// Add a header to the request.
@@ -158,7 +168,7 @@ impl<'a> TestRequest<'a> {
             .path
             .parse()
             .unwrap_or_else(|e| panic!("invalid test path {:?}: {e}", self.path));
-        let request = crate::request::Request::new(
+        let mut request = crate::request::Request::new(
             self.method,
             uri,
             self.headers,
@@ -166,6 +176,9 @@ impl<'a> TestRequest<'a> {
             self.body,
             self.client.state.clone(),
         );
+        if let Some(ip) = &self.peer_ip {
+            request.set_peer_ip(ip.clone());
+        }
         let response = crate::server::handle_app_request(
             &self.client.router,
             request,
@@ -612,6 +625,28 @@ mod tests {
             .into_client();
         let resp = client.get("/").send().await;
         assert_eq!(resp.body_bytes(), b"raw");
+    }
+
+    #[tokio::test]
+    async fn test_request_peer_ip_available_in_handler() {
+        let client = App::test()
+            .get("/ip", |req: Request| {
+                req.peer_ip().unwrap_or("unknown").to_string()
+            })
+            .into_client();
+        let resp = client.get("/ip").peer_ip("1.2.3.4").send().await;
+        assert_eq!(resp.text(), "1.2.3.4");
+    }
+
+    #[tokio::test]
+    async fn test_request_without_peer_ip() {
+        let client = App::test()
+            .get("/ip", |req: Request| {
+                req.peer_ip().unwrap_or("unknown").to_string()
+            })
+            .into_client();
+        let resp = client.get("/ip").send().await;
+        assert_eq!(resp.text(), "unknown");
     }
 
     // --- TestServer (real TCP) tests ---
