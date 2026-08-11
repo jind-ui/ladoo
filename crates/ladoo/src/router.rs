@@ -491,6 +491,21 @@ impl Router {
         })
     }
 
+    /// Returns `true` if any registered route matches `path`, regardless
+    /// of HTTP method.
+    ///
+    /// Used to distinguish "path exists but method isn't handled" (e.g. a
+    /// preflight `OPTIONS` request for a path that only registers `GET`)
+    /// from a genuinely unknown path. Middleware such as [`Cors`](crate::cors::Cors)
+    /// needs to run in the former case even though no route matched, but
+    /// truly unmatched paths should skip middleware and return a plain 404.
+    pub(crate) fn path_exists(&self, path: &str) -> bool {
+        let path_segments = Self::split_path(path);
+        self.routes
+            .iter()
+            .any(|route| Self::match_segments(&route.segments, &path_segments).is_some())
+    }
+
     /// Parse a path pattern like `/users/:id` or `/assets/*path` into segments.
     ///
     /// # Panics

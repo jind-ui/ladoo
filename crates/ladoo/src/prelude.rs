@@ -21,6 +21,7 @@ pub use crate::config::{Config, ConfigError};
 pub use crate::Config;
 pub use crate::context::Context;
 pub use crate::config::Environment;
+pub use crate::cors::Cors;
 pub use crate::error::{Error, Result};
 pub use crate::extract::FromRequest;
 pub use crate::response::{Html, IntoResponse, Response};

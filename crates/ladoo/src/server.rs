@@ -261,7 +261,37 @@ pub(crate) async fn handle_app_request(
                 }
             }
         }
+        None if router.path_exists(&path) => {
+            // The path is registered, just not for this method (e.g. a
+            // preflight `OPTIONS` request for a path that only registers
+            // `GET`). Global middleware still runs so middleware like
+            // `Cors` can intercept it; if nothing short-circuits, the
+            // fallback handler below produces the usual 404.
+            use crate::handler::IntoHandler;
+            let not_found_handler: Arc<dyn crate::handler::Handler> =
+                (|_req: Request| crate::error::Error::not_found("Not Found"))
+                    .into_handler()
+                    .into();
+
+            let ctx = crate::context::Context::new(request);
+            let result = crate::middleware::run_middleware_chain(
+                global_middleware,
+                not_found_handler,
+                ctx,
+            )
+            .await;
+
+            match result {
+                Ok(response) => response,
+                Err(err) => {
+                    use crate::response::IntoResponse;
+                    err.into_response()
+                }
+            }
+        }
         None => {
+            // Genuinely unknown path — skip middleware entirely and
+            // return a plain 404, matching existing behavior.
             use crate::response::IntoResponse;
             crate::error::Error::not_found("Not Found").into_response()
         }

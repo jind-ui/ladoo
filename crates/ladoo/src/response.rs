@@ -39,6 +39,17 @@ impl Response {
         }
     }
 
+    /// Create an empty response with the given status code and no body.
+    ///
+    /// Used internally for responses like `204 No Content`.
+    pub(crate) fn empty(status: StatusCode) -> Self {
+        Self {
+            status,
+            headers: http::HeaderMap::new(),
+            body: Bytes::new(),
+        }
+    }
+
     /// Returns the HTTP status code.
     pub fn status(&self) -> StatusCode {
         self.status

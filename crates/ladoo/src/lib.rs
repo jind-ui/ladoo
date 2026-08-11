@@ -403,6 +403,7 @@ pub mod app;
 pub mod auth;
 pub mod config;
 pub mod context;
+pub mod cors;
 pub mod error;
 pub mod extract;
 pub mod handler;
