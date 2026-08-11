@@ -31,6 +31,7 @@ pub use crate::middleware::{Middleware, Next};
 pub use crate::plugin::Plugin;
 #[cfg(feature = "json")]
 pub use crate::extract::Query;
+pub use crate::extract::{Valid, Validate};
 pub use crate::request::Request;
 #[cfg(feature = "logging")]
 pub use crate::logging::RequestId;

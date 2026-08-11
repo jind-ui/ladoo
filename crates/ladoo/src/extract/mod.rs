@@ -3,6 +3,9 @@
 //! Extractors implement [`FromRequest`] to pull typed data out of an
 //! HTTP request. Use them as handler arguments to get automatic parsing.
 //!
+//! `Valid<T>` wraps any extractor to add validation — see [`Valid`] for
+//! details.
+//!
 //! # Examples
 //!
 //! ```
