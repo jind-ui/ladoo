@@ -398,6 +398,66 @@
 //! Plugins can register middleware, provide state, add routes, and
 //! schedule shutdown hooks. They run once at startup and have zero
 //! per-request cost.
+//!
+//! ## CORS
+//!
+//! Allow cross-origin requests with a one-liner or custom policy:
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//!
+//! // Permissive (development)
+//! App::new()
+//!     .use_mw(Cors::permissive())
+//!     .get("/api/data", handler);
+//!
+//! // Custom (production)
+//! App::new()
+//!     .use_mw(
+//!         Cors::new()
+//!             .allow_origin("https://myapp.com")
+//!             .allow_methods([Method::GET, Method::POST])
+//!             .allow_headers(["Content-Type", "Authorization"])
+//!     )
+//!     .get("/api/data", handler);
+//! ```
+//!
+//! ## Rate Limiting
+//!
+//! Protect endpoints from abuse with pluggable storage:
+//!
+//! ```rust,ignore
+//! use ladoo::prelude::*;
+//! use std::time::Duration;
+//!
+//! App::new()
+//!     .use_mw(
+//!         RateLimit::new()
+//!             .limit(100)
+//!             .window(Duration::from_secs(900))
+//!             .key(RateKey::Ip)
+//!     )
+//!     .get("/api/data", handler);
+//! ```
+//!
+//! Tiered limits by user plan:
+//!
+//! ```rust,ignore
+//! App::new()
+//!     .use_mw(
+//!         RateLimit::new()
+//!             .tier("free", 100, Duration::from_secs(3600))
+//!             .tier("pro", 10_000, Duration::from_secs(3600))
+//!             .resolve_tier(|ctx: &Context| {
+//!                 ctx.headers()
+//!                     .get("x-plan")
+//!                     .and_then(|v| v.to_str().ok())
+//!                     .unwrap_or("free")
+//!                     .to_string()
+//!             })
+//!     )
+//!     .get("/api/data", handler);
+//! ```
 
 pub mod app;
 pub mod auth;
