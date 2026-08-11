@@ -70,6 +70,10 @@ mod json;
 #[cfg(feature = "json")]
 pub use json::Json;
 
+mod valid;
+
+pub use valid::{Validate, ValidationErrors};
+
 #[cfg(test)]
 mod tests {
     use super::*;
