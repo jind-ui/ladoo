@@ -184,7 +184,9 @@ impl ValidationErrors {
     /// Walks the error tree, extracting `message` from each
     /// [`validator::ValidationError`] when present, falling back to the
     /// error `code`. Nested struct errors are flattened with dot notation
-    /// (e.g., `"address.city"`).
+    /// (e.g., `"address.city"`), and nested collection errors (from a
+    /// `Vec<T>` field) are flattened with an index suffix
+    /// (e.g., `"items[0].name"`).
     pub fn from_validator_errors(errors: validator::ValidationErrors) -> Self {
         let mut result = Self::new();
         Self::flatten_validator_errors("", &errors, &mut result);
@@ -849,6 +851,43 @@ mod tests {
                 "nested field should be present: {:?}",
                 ve.field_errors(),
             );
+        }
+
+        #[test]
+        fn nested_list_validation_index_notation() {
+            // Same scoping requirement as `nested_struct_validation_dot_notation`:
+            // `#[validate(nested)]` on a `Vec<T>` field validates each item by
+            // calling its `.validate()` unqualified, which triggers the
+            // `ValidationErrorsKind::List` branch in `flatten_validator_errors`.
+            use validator::Validate;
+
+            #[derive(Debug, serde::Deserialize, validator::Validate)]
+            struct Item {
+                #[validate(length(min = 1))]
+                name: String,
+            }
+
+            #[derive(Debug, serde::Deserialize, validator::Validate)]
+            struct Order {
+                #[validate(nested)]
+                items: Vec<Item>,
+            }
+
+            let input = Order {
+                items: vec![
+                    Item { name: "widget".to_string() },
+                    Item { name: String::new() },
+                ],
+            };
+            let result = validator::Validate::validate(&input);
+            assert!(result.is_err());
+            let ve = ValidationErrors::from_validator_errors(result.unwrap_err());
+            assert!(
+                ve.field_errors().contains_key("items[1].name"),
+                "indexed list field should be present: {:?}",
+                ve.field_errors(),
+            );
+            assert!(!ve.field_errors().contains_key("items[0].name"));
         }
     }
 }
