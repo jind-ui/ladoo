@@ -72,7 +72,7 @@ pub use json::Json;
 
 mod valid;
 
-pub use valid::{Validate, ValidationErrors};
+pub use valid::{Valid, Validate, ValidationErrors};
 
 #[cfg(test)]
 mod tests {

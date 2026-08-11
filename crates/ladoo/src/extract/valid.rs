@@ -177,6 +177,69 @@ pub trait Validate {
     fn validate(&self) -> Result<(), ValidationErrors>;
 }
 
+/// Validation extractor — wraps any inner extractor, running validation
+/// after extraction.
+///
+/// `Valid<T>` requires `T: FromRequest + Deref` where `T::Target: Validate`.
+/// It first extracts `T` from the request (delegating to `T::from_request`),
+/// then calls `validate()` on the inner value. If validation fails, a 422
+/// response with per-field errors is returned.
+///
+/// # Examples
+///
+/// ```
+/// use ladoo::extract::{Valid, Validate, ValidationErrors, Json, FromRequest};
+/// use ladoo::request::Request;
+/// use http::Method;
+/// use serde::Deserialize;
+///
+/// #[derive(Debug, Deserialize)]
+/// struct CreateUser { name: String }
+///
+/// impl Validate for CreateUser {
+///     fn validate(&self) -> Result<(), ValidationErrors> {
+///         let mut errors = ValidationErrors::new();
+///         if self.name.is_empty() {
+///             errors.add("name", "must not be empty");
+///         }
+///         if errors.is_empty() { Ok(()) } else { Err(errors) }
+///     }
+/// }
+///
+/// // Valid input passes through
+/// let body = br#"{"name":"Alice"}"#;
+/// let mut req = Request::test_with_json(Method::POST, "/users", body);
+/// let Valid(Json(user)) = Valid::<Json<CreateUser>>::from_request(&mut req).unwrap();
+/// assert_eq!(user.name, "Alice");
+///
+/// // Invalid input returns 422
+/// let body = br#"{"name":""}"#;
+/// let mut req = Request::test_with_json(Method::POST, "/users", body);
+/// let err = Valid::<Json<CreateUser>>::from_request(&mut req).unwrap_err();
+/// assert_eq!(err.status(), 422);
+/// ```
+#[derive(Debug)]
+pub struct Valid<T>(pub T);
+
+impl<T> std::ops::Deref for Valid<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> super::FromRequest for Valid<T>
+where
+    T: super::FromRequest + std::ops::Deref,
+    T::Target: Validate,
+{
+    fn from_request(req: &mut crate::request::Request) -> Result<Self, Response> {
+        let inner = T::from_request(req)?;
+        inner.deref().validate().map_err(|e| e.into_response())?;
+        Ok(Valid(inner))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +427,203 @@ mod tests {
         errors.add("field", "message");
         let cloned = errors.clone();
         assert_eq!(cloned.field_errors()["field"], vec!["message"]);
+    }
+
+    use super::super::FromRequest;
+    use crate::request::Request;
+    use http::Method;
+
+    #[derive(Debug, serde::Deserialize)]
+    struct CreateUser {
+        name: String,
+        email: String,
+    }
+
+    impl Validate for CreateUser {
+        fn validate(&self) -> Result<(), ValidationErrors> {
+            let mut errors = ValidationErrors::new();
+            if self.name.is_empty() {
+                errors.add("name", "must not be empty");
+            }
+            if !self.email.contains('@') {
+                errors.add("email", "must be a valid email address");
+            }
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors)
+            }
+        }
+    }
+
+    fn json_request(body: &[u8]) -> Request {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+        Request::new(
+            Method::POST,
+            "/users".parse().unwrap(),
+            headers,
+            Vec::new(),
+            bytes::Bytes::copy_from_slice(body),
+            std::sync::Arc::new(crate::state::TypeMap::new()),
+        )
+    }
+
+    #[test]
+    fn valid_json_passes_through() {
+        let body = br#"{"name":"Alice","email":"alice@example.com"}"#;
+        let mut req = json_request(body);
+        let result =
+            Valid::<super::super::Json<CreateUser>>::from_request(&mut req);
+        assert!(result.is_ok());
+        let Valid(json) = result.unwrap();
+        assert_eq!(json.name, "Alice");
+    }
+
+    #[test]
+    fn invalid_json_returns_422() {
+        let body = br#"{"name":"","email":"not-an-email"}"#;
+        let mut req = json_request(body);
+        let result =
+            Valid::<super::super::Json<CreateUser>>::from_request(&mut req);
+        assert!(result.is_err());
+        let resp = result.unwrap_err();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
+    fn invalid_json_response_has_field_errors() {
+        let body = br#"{"name":"","email":"bad"}"#;
+        let mut req = json_request(body);
+        let resp =
+            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
+                .unwrap_err();
+        let json: serde_json::Value =
+            serde_json::from_slice(resp.body_bytes()).unwrap();
+        assert!(json["fields"]["name"].is_array());
+        assert!(json["fields"]["email"].is_array());
+    }
+
+    #[test]
+    fn multiple_field_errors_in_response() {
+        let body = br#"{"name":"","email":"bad"}"#;
+        let mut req = json_request(body);
+        let resp =
+            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
+                .unwrap_err();
+        let json: serde_json::Value =
+            serde_json::from_slice(resp.body_bytes()).unwrap();
+        assert_eq!(json["fields"]["name"][0], "must not be empty");
+        assert_eq!(json["fields"]["email"][0], "must be a valid email address");
+    }
+
+    #[test]
+    fn malformed_json_still_returns_400_not_422() {
+        let body = b"not valid json at all";
+        let mut req = json_request(body);
+        let resp =
+            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
+                .unwrap_err();
+        assert_eq!(resp.status(), http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn wrong_content_type_still_returns_415() {
+        let mut req =
+            Request::test_with_body(Method::POST, "/users", b"some body");
+        let resp =
+            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
+                .unwrap_err();
+        assert_eq!(resp.status(), http::StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[test]
+    fn valid_deref_accesses_inner() {
+        let body = br#"{"name":"Bob","email":"bob@example.com"}"#;
+        let mut req = json_request(body);
+        let valid =
+            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
+                .unwrap();
+        assert_eq!(valid.name, "Bob");
+    }
+
+    #[test]
+    fn valid_destructure_pattern() {
+        let body = br#"{"name":"Charlie","email":"c@example.com"}"#;
+        let mut req = json_request(body);
+        let Valid(json) =
+            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
+                .unwrap();
+        assert_eq!(json.name, "Charlie");
+    }
+
+    #[test]
+    fn valid_query_composability() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Search {
+            q: String,
+        }
+        impl Validate for Search {
+            fn validate(&self) -> Result<(), ValidationErrors> {
+                let mut errors = ValidationErrors::new();
+                if self.q.is_empty() {
+                    errors.add("q", "must not be empty");
+                }
+                if errors.is_empty() { Ok(()) } else { Err(errors) }
+            }
+        }
+
+        let mut req = Request::test(Method::GET, "/search?q=rust");
+        let result =
+            Valid::<super::super::Query<Search>>::from_request(&mut req);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().q, "rust");
+    }
+
+    #[test]
+    fn valid_query_invalid_returns_422() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Search {
+            q: String,
+        }
+        impl Validate for Search {
+            fn validate(&self) -> Result<(), ValidationErrors> {
+                let mut errors = ValidationErrors::new();
+                if self.q.is_empty() {
+                    errors.add("q", "must not be empty");
+                }
+                if errors.is_empty() { Ok(()) } else { Err(errors) }
+            }
+        }
+
+        let mut req = Request::test(Method::GET, "/search?q=");
+        let resp =
+            Valid::<super::super::Query<Search>>::from_request(&mut req)
+                .unwrap_err();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
+    fn valid_only_validates_once() {
+        let body = br#"{"name":"Alice","email":"a@b.com"}"#;
+        let mut req = json_request(body);
+        let result =
+            Valid::<super::super::Json<CreateUser>>::from_request(&mut req);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validation_response_always_json_in_prod() {
+        let _guard = crate::error::tests::lock_env();
+        std::env::set_var("LADOO_ENV", "production");
+        let mut errors = ValidationErrors::new();
+        errors.add("field", "error");
+        let resp = errors.into_response();
+        std::env::remove_var("LADOO_ENV");
+        assert_eq!(resp.content_type(), Some("application/json"));
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

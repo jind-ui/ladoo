@@ -310,7 +310,7 @@ h1 {{ color: #e74c3c; font-size: 2em; margin-bottom: 0.2em; }}
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use http::StatusCode;
 
@@ -470,7 +470,7 @@ mod tests {
     // touches `LADOO_ENV`/`APP_ENV` through this lock so they don't race.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    pub(crate) fn lock_env() -> std::sync::MutexGuard<'static, ()> {
         ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 

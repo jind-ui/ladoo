@@ -160,6 +160,38 @@ impl Request {
         }
     }
 
+    /// Create a test request with a JSON body and `Content-Type: application/json`.
+    ///
+    /// Useful for unit testing extractors that both require the JSON
+    /// content type and read the body, such as `Json<T>` and `Valid<Json<T>>`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ladoo::request::Request;
+    /// use http::Method;
+    ///
+    /// let req = Request::test_with_json(Method::POST, "/users", br#"{"name":"Alice"}"#);
+    /// assert_eq!(req.content_type(), Some("application/json"));
+    /// assert_eq!(req.body(), br#"{"name":"Alice"}"#);
+    /// ```
+    pub fn test_with_json(method: Method, path: &str, body: &[u8]) -> Self {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+        Self {
+            method,
+            uri: path.parse().expect("invalid URI"),
+            headers,
+            params: Vec::new(),
+            body: Bytes::copy_from_slice(body),
+            extensions: Arc::new(TypeMap::new()),
+            per_request: TypeMap::new(),
+        }
+    }
+
     /// Returns the request body as bytes.
     pub fn body(&self) -> &[u8] {
         &self.body
