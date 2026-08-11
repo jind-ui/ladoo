@@ -30,6 +30,7 @@ pub use crate::handler::IntoHandler;
 pub use crate::extract::Json;
 pub use crate::middleware::{Middleware, Next};
 pub use crate::plugin::Plugin;
+pub use crate::rate_limit::{MemoryStore, RateKey, RateLimit, RateStore};
 #[cfg(feature = "json")]
 pub use crate::extract::Query;
 pub use crate::extract::{Valid, Validate};

@@ -80,6 +80,23 @@ impl Response {
         self
     }
 
+    /// Create a response with a JSON string body and the given status.
+    ///
+    /// Sets `Content-Type: application/json`. Used internally for
+    /// structured error responses (rate limiting, etc.).
+    pub(crate) fn with_json_body(status: StatusCode, json: &str) -> Self {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::header::HeaderValue::from_static("application/json"),
+        );
+        Self {
+            status,
+            headers,
+            body: Bytes::from(json.to_string()),
+        }
+    }
+
     /// Set a response header, replacing any existing value.
     ///
     /// Useful in middleware to add or modify response headers.

@@ -412,6 +412,7 @@ pub mod logging;
 pub mod middleware;
 pub mod plugin;
 pub mod prelude;
+pub mod rate_limit;
 pub mod request;
 pub mod response;
 pub mod router;

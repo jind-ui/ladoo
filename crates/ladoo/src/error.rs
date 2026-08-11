@@ -89,6 +89,11 @@ impl Error {
         Self::new(StatusCode::CONFLICT, message)
     }
 
+    /// Create a 429 Too Many Requests error.
+    pub fn too_many_requests(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::TOO_MANY_REQUESTS, message)
+    }
+
     /// Attach a dev-only detail string to this error.
     ///
     /// The detail is intended for logging or dev-mode responses, not for
@@ -369,6 +374,13 @@ pub(crate) mod tests {
         let err = Error::conflict("already exists");
         assert_eq!(err.status(), StatusCode::CONFLICT);
         assert_eq!(err.message(), "already exists");
+    }
+
+    #[test]
+    fn too_many_requests_has_status_429() {
+        let err = Error::too_many_requests("slow down");
+        assert_eq!(err.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(err.message(), "slow down");
     }
 
     #[test]

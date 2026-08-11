@@ -1,8 +1,7 @@
 //! Rate limiting middleware with pluggable storage.
 //!
-//! The `RateLimit` middleware (added in a later phase task) tracks request
-//! counts per key (IP, header, custom function) and rejects excess requests
-//! with `429 Too Many Requests`.
+//! The [`RateLimit`] middleware tracks request counts per key (IP, header,
+//! custom function) and rejects excess requests with `429 Too Many Requests`.
 //! Storage is pluggable via the [`RateStore`] trait — implement it for
 //! Redis, a database, or any shared backend.
 //!
@@ -22,9 +21,17 @@
 //!     .get("/api/data", handler);
 //! ```
 
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
+
+use crate::context::Context;
+use crate::error::Result;
+use crate::middleware::{Middleware, Next};
+use crate::response::Response;
 
 /// The result of a rate limit check.
 ///
@@ -165,6 +172,288 @@ impl RateStore for MemoryStore {
     }
 }
 
+/// How to identify a client for rate limiting.
+///
+/// Each variant extracts a string key from the request. Requests with
+/// the same key share a counter.
+pub enum RateKey {
+    /// Client IP address from the TCP socket.
+    Ip,
+    /// Value of a specific request header.
+    Header(String),
+    /// Custom key function.
+    Custom(TierResolver),
+}
+
+/// A function that maps a request [`Context`] to a `String`.
+///
+/// Used both for [`RateKey::Custom`] key extraction and for
+/// [`RateLimit::resolve_tier`] tier resolution.
+type TierResolver = Arc<dyn Fn(&Context) -> String + Send + Sync>;
+
+enum RateLimitConfig {
+    Simple {
+        limit: u64,
+        window: Duration,
+        key: RateKey,
+    },
+    Tiered {
+        tiers: Vec<Tier>,
+        resolve: Option<TierResolver>,
+    },
+}
+
+struct Tier {
+    name: String,
+    limit: u64,
+    window: Duration,
+}
+
+/// Rate limiting middleware with pluggable storage.
+///
+/// Tracks request counts per key and rejects excess requests with
+/// `429 Too Many Requests`. Supports simple limits (one limit for
+/// all requests) and tiered limits (different limits per user plan).
+///
+/// # Simple Mode
+///
+/// ```rust,ignore
+/// use ladoo::prelude::*;
+/// use std::time::Duration;
+///
+/// App::new()
+///     .use_mw(
+///         RateLimit::new()
+///             .limit(100)
+///             .window(Duration::from_secs(900))
+///             .key(RateKey::Ip)
+///     )
+///     .get("/api", handler);
+/// ```
+///
+/// # Tiered Mode
+///
+/// ```rust,ignore
+/// App::new()
+///     .use_mw(
+///         RateLimit::new()
+///             .tier("free", 100, Duration::from_secs(3600))
+///             .tier("pro", 10_000, Duration::from_secs(3600))
+///             .resolve_tier(|ctx: &Context| {
+///                 // Extract the plan from auth state
+///                 "free".to_string()
+///             })
+///     )
+///     .get("/api", handler);
+/// ```
+pub struct RateLimit<S: RateStore = MemoryStore> {
+    config: RateLimitConfig,
+    store: Arc<S>,
+}
+
+impl RateLimit<MemoryStore> {
+    /// Create a rate limiter with default settings.
+    ///
+    /// Defaults: 100 requests per 15 minutes, keyed by IP, using
+    /// in-memory storage.
+    pub fn new() -> Self {
+        Self {
+            config: RateLimitConfig::Simple {
+                limit: 100,
+                window: Duration::from_secs(900),
+                key: RateKey::Ip,
+            },
+            store: Arc::new(MemoryStore::new()),
+        }
+    }
+}
+
+impl Default for RateLimit<MemoryStore> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<S: RateStore> RateLimit<S> {
+    /// Set the maximum number of requests per window.
+    ///
+    /// Ignored when tiered mode is active (use [`tier`](Self::tier)
+    /// instead).
+    pub fn limit(mut self, limit: u64) -> Self {
+        if let RateLimitConfig::Simple {
+            limit: ref mut l, ..
+        } = self.config
+        {
+            *l = limit;
+        }
+        self
+    }
+
+    /// Set the time window for the rate limit.
+    ///
+    /// Ignored when tiered mode is active.
+    pub fn window(mut self, window: Duration) -> Self {
+        if let RateLimitConfig::Simple {
+            window: ref mut w, ..
+        } = self.config
+        {
+            *w = window;
+        }
+        self
+    }
+
+    /// Set how to identify clients.
+    ///
+    /// Ignored when tiered mode is active (tiered mode always uses
+    /// the resolve function output as the key prefix).
+    pub fn key(mut self, key: RateKey) -> Self {
+        if let RateLimitConfig::Simple {
+            key: ref mut k, ..
+        } = self.config
+        {
+            *k = key;
+        }
+        self
+    }
+
+    /// Use a different storage backend.
+    ///
+    /// Replaces the default [`MemoryStore`] with a custom
+    /// [`RateStore`] implementation.
+    pub fn store<S2: RateStore>(self, store: S2) -> RateLimit<S2> {
+        RateLimit {
+            config: self.config,
+            store: Arc::new(store),
+        }
+    }
+
+    /// Add a rate limit tier.
+    ///
+    /// The first call to `tier` switches from simple mode to tiered
+    /// mode. Each tier has a name, a request limit, and a time window.
+    /// Use [`resolve_tier`](Self::resolve_tier) to map each request
+    /// to a tier name.
+    pub fn tier(mut self, name: &str, limit: u64, window: Duration) -> Self {
+        match &mut self.config {
+            RateLimitConfig::Simple { .. } => {
+                self.config = RateLimitConfig::Tiered {
+                    tiers: vec![Tier {
+                        name: name.to_string(),
+                        limit,
+                        window,
+                    }],
+                    resolve: None,
+                };
+            }
+            RateLimitConfig::Tiered { tiers, .. } => {
+                tiers.push(Tier {
+                    name: name.to_string(),
+                    limit,
+                    window,
+                });
+            }
+        }
+        self
+    }
+
+    /// Set the function that maps a request to a tier name.
+    ///
+    /// The closure receives the [`Context`] (after upstream middleware
+    /// has run) and returns the tier name as a `String`. If the
+    /// returned name doesn't match any defined tier, the first tier
+    /// is used as a fallback.
+    pub fn resolve_tier<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&Context) -> String + Send + Sync + 'static,
+    {
+        if let RateLimitConfig::Tiered { resolve, .. } = &mut self.config {
+            *resolve = Some(Arc::new(f));
+        }
+        self
+    }
+
+    fn extract_key(&self, ctx: &Context) -> String {
+        match &self.config {
+            RateLimitConfig::Simple { key, .. } => match key {
+                RateKey::Ip => ctx.peer_ip().unwrap_or("unknown").to_string(),
+                RateKey::Header(name) => ctx
+                    .headers()
+                    .get(name.as_str())
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("unknown")
+                    .to_string(),
+                RateKey::Custom(f) => f(ctx),
+            },
+            RateLimitConfig::Tiered { resolve, .. } => {
+                let tier_name = resolve
+                    .as_ref()
+                    .map(|f| f(ctx))
+                    .unwrap_or_else(|| "default".to_string());
+                // Include the resolved tier as the key prefix so
+                // different tiers sharing the same underlying identity
+                // don't collide.
+                format!("tier:{tier_name}")
+            }
+        }
+    }
+
+    fn resolve_limit_and_window(&self, ctx: &Context) -> (u64, Duration) {
+        match &self.config {
+            RateLimitConfig::Simple { limit, window, .. } => (*limit, *window),
+            RateLimitConfig::Tiered { tiers, resolve, .. } => {
+                let tier_name = resolve.as_ref().map(|f| f(ctx)).unwrap_or_default();
+                tiers
+                    .iter()
+                    .find(|t| t.name == tier_name)
+                    .or_else(|| tiers.first())
+                    .map(|t| (t.limit, t.window))
+                    .unwrap_or((100, Duration::from_secs(900)))
+            }
+        }
+    }
+}
+
+impl<S: RateStore + 'static> Middleware for RateLimit<S> {
+    fn call(
+        &self,
+        ctx: Context,
+        next: Next,
+    ) -> Pin<Box<dyn Future<Output = Result<Response>> + Send>> {
+        let store = self.store.clone();
+        let key = self.extract_key(&ctx);
+        let (limit, window) = self.resolve_limit_and_window(&ctx);
+
+        Box::pin(async move {
+            let result = store.check_and_increment(&key, limit, window).await;
+
+            let reset_secs = result
+                .reset_at
+                .saturating_duration_since(Instant::now())
+                .as_secs();
+
+            if !result.allowed {
+                let body = format!(
+                    "{{\"error\":\"rate limit exceeded\",\"retry_after\":{}}}",
+                    reset_secs
+                );
+                let mut resp =
+                    Response::with_json_body(http::StatusCode::TOO_MANY_REQUESTS, &body);
+                resp.set_header("x-ratelimit-limit", &result.limit.to_string());
+                resp.set_header("x-ratelimit-remaining", "0");
+                resp.set_header("x-ratelimit-reset", &reset_secs.to_string());
+                resp.set_header("retry-after", &reset_secs.to_string());
+                return Ok(resp);
+            }
+
+            let mut resp = next.run(ctx).await?;
+            resp.set_header("x-ratelimit-limit", &result.limit.to_string());
+            resp.set_header("x-ratelimit-remaining", &result.remaining.to_string());
+            resp.set_header("x-ratelimit-reset", &reset_secs.to_string());
+            Ok(resp)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,5 +531,267 @@ mod tests {
             .await;
         assert!(result.allowed);
         assert_eq!(result.remaining, 4);
+    }
+
+    #[test]
+    fn rate_limit_builder_sets_limit_and_window() {
+        let rl = RateLimit::new()
+            .limit(100)
+            .window(Duration::from_secs(900));
+        // Verify through internal state — limit/window are stored correctly
+        assert!(matches!(
+            &rl.config,
+            RateLimitConfig::Simple { limit: 100, .. }
+        ));
+    }
+
+    #[test]
+    fn rate_limit_default_key_is_ip() {
+        let rl = RateLimit::new();
+        assert!(matches!(
+            &rl.config,
+            RateLimitConfig::Simple {
+                key: RateKey::Ip,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rate_limit_tier_switches_to_tiered_mode() {
+        let rl = RateLimit::new()
+            .tier("free", 100, Duration::from_secs(3600))
+            .tier("pro", 10_000, Duration::from_secs(3600));
+        assert!(matches!(&rl.config, RateLimitConfig::Tiered { .. }));
+    }
+
+    use crate::app::App;
+    use crate::request::Request;
+    use http::StatusCode;
+
+    #[tokio::test]
+    async fn allows_requests_under_limit() {
+        let client = App::test()
+            .use_mw(
+                RateLimit::new()
+                    .limit(3)
+                    .window(Duration::from_secs(60))
+                    .key(RateKey::Ip),
+            )
+            .get("/", |_: Request| "ok")
+            .into_client();
+
+        let resp = client.get("/").peer_ip("1.2.3.4").send().await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.header("x-ratelimit-limit"), Some("3"));
+        assert_eq!(resp.header("x-ratelimit-remaining"), Some("2"));
+        assert!(resp.header("x-ratelimit-reset").is_some());
+    }
+
+    #[tokio::test]
+    async fn rejects_at_limit_with_429() {
+        let client = App::test()
+            .use_mw(
+                RateLimit::new()
+                    .limit(2)
+                    .window(Duration::from_secs(60))
+                    .key(RateKey::Ip),
+            )
+            .get("/", |_: Request| "ok")
+            .into_client();
+
+        client.get("/").peer_ip("1.2.3.4").send().await;
+        client.get("/").peer_ip("1.2.3.4").send().await;
+        let resp = client.get("/").peer_ip("1.2.3.4").send().await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(resp.header("retry-after").is_some());
+    }
+
+    #[tokio::test]
+    async fn different_ips_get_separate_counters() {
+        let client = App::test()
+            .use_mw(
+                RateLimit::new()
+                    .limit(1)
+                    .window(Duration::from_secs(60))
+                    .key(RateKey::Ip),
+            )
+            .get("/", |_: Request| "ok")
+            .into_client();
+
+        let resp1 = client.get("/").peer_ip("1.1.1.1").send().await;
+        assert_eq!(resp1.status(), StatusCode::OK);
+
+        let resp2 = client.get("/").peer_ip("2.2.2.2").send().await;
+        assert_eq!(resp2.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn header_key_uses_header_value() {
+        let client = App::test()
+            .use_mw(
+                RateLimit::new()
+                    .limit(1)
+                    .window(Duration::from_secs(60))
+                    .key(RateKey::Header("x-api-key".into())),
+            )
+            .get("/", |_: Request| "ok")
+            .into_client();
+
+        let resp = client
+            .get("/")
+            .header("x-api-key", "key-a")
+            .send()
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = client
+            .get("/")
+            .header("x-api-key", "key-a")
+            .send()
+            .await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Different key → separate counter
+        let resp = client
+            .get("/")
+            .header("x-api-key", "key-b")
+            .send()
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn custom_key_function() {
+        let client = App::test()
+            .use_mw(
+                RateLimit::new()
+                    .limit(1)
+                    .window(Duration::from_secs(60))
+                    .key(RateKey::Custom(Arc::new(|_ctx| {
+                        "everyone".to_string()
+                    }))),
+            )
+            .get("/", |_: Request| "ok")
+            .into_client();
+
+        let resp = client.get("/").peer_ip("1.1.1.1").send().await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Different IP but same custom key → shared counter
+        let resp = client.get("/").peer_ip("2.2.2.2").send().await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn tiered_limits_per_plan() {
+        let client = App::test()
+            .use_mw(
+                RateLimit::new()
+                    .tier("free", 1, Duration::from_secs(60))
+                    .tier("pro", 100, Duration::from_secs(60))
+                    .resolve_tier(|ctx: &Context| {
+                        ctx.headers()
+                            .get("x-plan")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("free")
+                            .to_string()
+                    }),
+            )
+            .get("/", |_: Request| "ok")
+            .into_client();
+
+        // Free user hits limit after 1 request
+        let resp = client.get("/").header("x-plan", "free").send().await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = client.get("/").header("x-plan", "free").send().await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Pro user still has headroom
+        let resp = client.get("/").header("x-plan", "pro").send().await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn unknown_tier_falls_back_to_first() {
+        let client = App::test()
+            .use_mw(
+                RateLimit::new()
+                    .tier("free", 1, Duration::from_secs(60))
+                    .tier("pro", 100, Duration::from_secs(60))
+                    .resolve_tier(|_ctx: &Context| "unknown_plan".to_string()),
+            )
+            .get("/", |_: Request| "ok")
+            .into_client();
+
+        let resp = client.get("/").send().await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        // Falls back to first tier (free, limit=1)
+        let resp = client.get("/").send().await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn rate_limit_429_has_json_body() {
+        let client = App::test()
+            .use_mw(
+                RateLimit::new()
+                    .limit(1)
+                    .window(Duration::from_secs(60))
+                    .key(RateKey::Ip),
+            )
+            .get("/", |_: Request| "ok")
+            .into_client();
+
+        client.get("/").peer_ip("1.1.1.1").send().await;
+        let resp = client.get("/").peer_ip("1.1.1.1").send().await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = resp.text();
+        assert!(body.contains("rate limit exceeded"));
+        assert!(body.contains("retry_after"));
+    }
+
+    #[tokio::test]
+    async fn scoped_rate_limit_on_group() {
+        let client = App::test()
+            .group("/api", |g| {
+                g.use_mw(
+                    RateLimit::new()
+                        .limit(1)
+                        .window(Duration::from_secs(60))
+                        .key(RateKey::Ip),
+                )
+                .get("/data", |_: Request| "api")
+            })
+            .get("/page", |_: Request| "page")
+            .into_client();
+
+        // API route is rate limited
+        client.get("/api/data").peer_ip("1.1.1.1").send().await;
+        let resp = client.get("/api/data").peer_ip("1.1.1.1").send().await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Page route is not rate limited
+        let resp = client.get("/page").peer_ip("1.1.1.1").send().await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn no_peer_ip_falls_back_to_unknown() {
+        let client = App::test()
+            .use_mw(
+                RateLimit::new()
+                    .limit(1)
+                    .window(Duration::from_secs(60))
+                    .key(RateKey::Ip),
+            )
+            .get("/", |_: Request| "ok")
+            .into_client();
+
+        // No peer_ip set — uses fallback key
+        let resp = client.get("/").send().await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = client.get("/").send().await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 }
