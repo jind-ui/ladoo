@@ -594,4 +594,37 @@ mod tests {
             .await;
         assert!(page_resp.header("access-control-allow-origin").is_none());
     }
+
+    #[tokio::test]
+    async fn scoped_cors_handles_preflight_for_group() {
+        let client = App::test()
+            .group("/api", |g| {
+                g.use_mw(Cors::permissive())
+                    .get("/data", |_: Request| "api data")
+            })
+            .get("/page", |_: Request| "page")
+            .into_client();
+
+        let preflight_resp = client
+            .request(Method::OPTIONS, "/api/data")
+            .header("origin", "https://example.com")
+            .header("access-control-request-method", "GET")
+            .send()
+            .await;
+        assert_eq!(preflight_resp.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            preflight_resp.header("access-control-allow-origin"),
+            Some("*")
+        );
+
+        // A path outside the group has no CORS middleware, so its
+        // preflight is a genuine 404 (no route registers it at all).
+        let page_preflight_resp = client
+            .request(Method::OPTIONS, "/page")
+            .header("origin", "https://example.com")
+            .header("access-control-request-method", "GET")
+            .send()
+            .await;
+        assert_eq!(page_preflight_resp.status(), StatusCode::NOT_FOUND);
+    }
 }

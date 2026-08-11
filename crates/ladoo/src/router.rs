@@ -491,19 +491,27 @@ impl Router {
         })
     }
 
-    /// Returns `true` if any registered route matches `path`, regardless
-    /// of HTTP method.
+    /// Returns the middleware chain for a route matching `path`, regardless
+    /// of HTTP method — `None` if no route matches the path at all.
     ///
     /// Used to distinguish "path exists but method isn't handled" (e.g. a
     /// preflight `OPTIONS` request for a path that only registers `GET`)
     /// from a genuinely unknown path. Middleware such as [`Cors`](crate::cors::Cors)
-    /// needs to run in the former case even though no route matched, but
-    /// truly unmatched paths should skip middleware and return a plain 404.
-    pub(crate) fn path_exists(&self, path: &str) -> bool {
+    /// needs to run in the former case even though no route matched — including
+    /// group-scoped middleware merged in via [`Router::merge_from`], which a
+    /// plain existence check would miss — but truly unmatched paths should
+    /// skip middleware and return a plain 404.
+    ///
+    /// If multiple routes (different methods) share the same path, the
+    /// first match in registration order is used. In practice routes for
+    /// the same literal path are registered together (same `group` call),
+    /// so they carry identical group-scoped middleware.
+    pub(crate) fn find_middleware_for_path(&self, path: &str) -> Option<&[Arc<dyn Middleware>]> {
         let path_segments = Self::split_path(path);
         self.routes
             .iter()
-            .any(|route| Self::match_segments(&route.segments, &path_segments).is_some())
+            .find(|route| Self::match_segments(&route.segments, &path_segments).is_some())
+            .map(|route| route.middleware.as_slice())
     }
 
     /// Parse a path pattern like `/users/:id` or `/assets/*path` into segments.

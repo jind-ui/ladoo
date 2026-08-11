@@ -236,50 +236,52 @@ pub(crate) async fn handle_app_request(
     let method = request.method().clone();
     let path = request.path().to_string();
 
-    match router.find(&method, &path) {
-        Some(route_match) => {
-            let mut request = request;
-            request.set_params(route_match.params);
+    if let Some(route_match) = router.find(&method, &path) {
+        let mut request = request;
+        request.set_params(route_match.params);
 
-            let mut all_middleware: Vec<Arc<dyn Middleware>> = Vec::new();
-            all_middleware.extend_from_slice(global_middleware);
-            all_middleware.extend_from_slice(route_match.middleware);
+        let mut all_middleware: Vec<Arc<dyn Middleware>> = Vec::new();
+        all_middleware.extend_from_slice(global_middleware);
+        all_middleware.extend_from_slice(route_match.middleware);
 
-            let ctx = crate::context::Context::new(request);
-            let result = crate::middleware::run_middleware_chain(
-                &all_middleware,
-                route_match.handler,
-                ctx,
-            )
-            .await;
+        let ctx = crate::context::Context::new(request);
+        let result =
+            crate::middleware::run_middleware_chain(&all_middleware, route_match.handler, ctx)
+                .await;
 
-            match result {
-                Ok(response) => response,
-                Err(err) => {
-                    use crate::response::IntoResponse;
-                    err.into_response()
-                }
+        return match result {
+            Ok(response) => response,
+            Err(err) => {
+                use crate::response::IntoResponse;
+                err.into_response()
             }
-        }
-        None if router.path_exists(&path) => {
+        };
+    }
+
+    match router.find_middleware_for_path(&path) {
+        Some(route_middleware) => {
             // The path is registered, just not for this method (e.g. a
             // preflight `OPTIONS` request for a path that only registers
-            // `GET`). Global middleware still runs so middleware like
-            // `Cors` can intercept it; if nothing short-circuits, the
-            // fallback handler below produces the usual 404.
+            // `GET`). Global middleware *and* the route's own (e.g.
+            // group-scoped) middleware still run, so middleware like
+            // `Cors` can intercept it regardless of whether it was
+            // registered globally or on a `.group(...)`; if nothing
+            // short-circuits, the fallback handler below produces the
+            // usual 404.
             use crate::handler::IntoHandler;
             let not_found_handler: Arc<dyn crate::handler::Handler> =
                 (|_req: Request| crate::error::Error::not_found("Not Found"))
                     .into_handler()
                     .into();
 
+            let mut all_middleware: Vec<Arc<dyn Middleware>> = Vec::new();
+            all_middleware.extend_from_slice(global_middleware);
+            all_middleware.extend_from_slice(route_middleware);
+
             let ctx = crate::context::Context::new(request);
-            let result = crate::middleware::run_middleware_chain(
-                global_middleware,
-                not_found_handler,
-                ctx,
-            )
-            .await;
+            let result =
+                crate::middleware::run_middleware_chain(&all_middleware, not_found_handler, ctx)
+                    .await;
 
             match result {
                 Ok(response) => response,
