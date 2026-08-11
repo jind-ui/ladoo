@@ -151,7 +151,6 @@ mod tests {
 
     fn make_expired_token(secret: &[u8]) -> String {
         use jsonwebtoken::{encode, EncodingKey, Header};
-        use serde::Serialize;
 
         #[derive(Serialize)]
         struct ExpiredClaims {

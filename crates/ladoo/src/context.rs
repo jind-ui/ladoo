@@ -78,11 +78,9 @@ impl Context {
 
     /// Borrow the inner request.
     ///
-    /// Used by auth middleware to pass the request to
+    /// Used by auth and RBAC middleware to pass the request to
     /// [`AuthProvider::authenticate`](crate::auth::AuthProvider::authenticate)
-    /// without consuming the context. Not yet called outside tests — a
-    /// future task wires `AuthGuardMiddleware` into `Router`.
-    #[allow(dead_code)]
+    /// without consuming the context.
     pub(crate) fn request(&self) -> &Request {
         &self.request
     }
