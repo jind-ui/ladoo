@@ -1,7 +1,7 @@
 //! Built-in authentication providers.
 //!
 //! [`ApiKeyAuth`] authenticates via a header/key lookup. `JwtAuth`
-//! (behind the `auth-jwt` feature) is implemented in a later task.
+//! (behind the `auth-jwt` feature) decodes and validates JSON Web Tokens.
 
 mod api_key;
 
