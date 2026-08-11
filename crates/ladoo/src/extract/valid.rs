@@ -25,12 +25,9 @@
 use std::collections::HashMap;
 use std::fmt;
 
-#[cfg(feature = "json")]
 use bytes::Bytes;
-#[cfg(feature = "json")]
 use http::StatusCode;
 
-#[cfg(feature = "json")]
 use crate::response::{IntoResponse, Response};
 
 /// Per-field validation errors.
@@ -39,8 +36,9 @@ use crate::response::{IntoResponse, Response};
 /// of error messages. Use [`add`](Self::add) to accumulate errors and
 /// [`is_empty`](Self::is_empty) to check whether any exist.
 ///
-/// Implements [`IntoResponse`] to render a 422 JSON response with the
-/// `fields` map, suitable for API consumers in both dev and prod modes.
+/// Implements [`IntoResponse`] to render a 422 response: a JSON body with
+/// the `fields` map when the `json` feature is enabled (the default), or
+/// a plain-text rendering of [`Display`](fmt::Display) otherwise.
 #[derive(Debug, Clone)]
 pub struct ValidationErrors(HashMap<String, Vec<String>>);
 
@@ -124,6 +122,22 @@ impl IntoResponse for ValidationErrors {
             StatusCode::UNPROCESSABLE_ENTITY,
             headers,
             Bytes::from(body.to_string()),
+        )
+    }
+}
+
+#[cfg(not(feature = "json"))]
+impl IntoResponse for ValidationErrors {
+    fn into_response(self) -> Response {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("text/plain; charset=utf-8"),
+        );
+        Response::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            headers,
+            Bytes::from(self.to_string()),
         )
     }
 }
@@ -248,13 +262,26 @@ mod tests {
         assert!(age_pos < name_pos, "fields should be sorted alphabetically");
     }
 
-    #[cfg(feature = "json")]
     #[test]
     fn into_response_returns_422() {
         let mut errors = ValidationErrors::new();
         errors.add("email", "invalid");
         let resp = errors.into_response();
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[cfg(not(feature = "json"))]
+    #[test]
+    fn into_response_plain_text_fallback() {
+        let mut errors = ValidationErrors::new();
+        errors.add("email", "invalid");
+        let resp = errors.into_response();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(resp.content_type(), Some("text/plain; charset=utf-8"));
+        let body = std::str::from_utf8(resp.body_bytes()).unwrap();
+        assert!(body.starts_with("Validation failed"));
+        assert!(body.contains("email"));
+        assert!(body.contains("invalid"));
     }
 
     #[cfg(feature = "json")]
