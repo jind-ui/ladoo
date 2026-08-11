@@ -187,7 +187,9 @@ pub trait Validate {
 ///
 /// # Examples
 ///
-/// ```
+/// This example requires the `json` feature (on by default) for `Json`.
+#[cfg_attr(feature = "json", doc = "```")]
+#[cfg_attr(not(feature = "json"), doc = "```ignore")]
 /// use ladoo::extract::{Valid, Validate, ValidationErrors, Json, FromRequest};
 /// use ladoo::request::Request;
 /// use http::Method;
@@ -429,16 +431,21 @@ mod tests {
         assert_eq!(cloned.field_errors()["field"], vec!["message"]);
     }
 
+    #[cfg(feature = "json")]
     use super::super::FromRequest;
+    #[cfg(feature = "json")]
     use crate::request::Request;
+    #[cfg(feature = "json")]
     use http::Method;
 
+    #[cfg(feature = "json")]
     #[derive(Debug, serde::Deserialize)]
     struct CreateUser {
         name: String,
         email: String,
     }
 
+    #[cfg(feature = "json")]
     impl Validate for CreateUser {
         fn validate(&self) -> Result<(), ValidationErrors> {
             let mut errors = ValidationErrors::new();
@@ -456,6 +463,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "json")]
     fn json_request(body: &[u8]) -> Request {
         let mut headers = http::HeaderMap::new();
         headers.insert(
@@ -472,6 +480,7 @@ mod tests {
         )
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn valid_json_passes_through() {
         let body = br#"{"name":"Alice","email":"alice@example.com"}"#;
@@ -483,6 +492,7 @@ mod tests {
         assert_eq!(json.name, "Alice");
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn invalid_json_returns_422() {
         let body = br#"{"name":"","email":"not-an-email"}"#;
@@ -494,6 +504,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn invalid_json_response_has_field_errors() {
         let body = br#"{"name":"","email":"bad"}"#;
@@ -507,6 +518,7 @@ mod tests {
         assert!(json["fields"]["email"].is_array());
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn multiple_field_errors_in_response() {
         let body = br#"{"name":"","email":"bad"}"#;
@@ -520,6 +532,7 @@ mod tests {
         assert_eq!(json["fields"]["email"][0], "must be a valid email address");
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn malformed_json_still_returns_400_not_422() {
         let body = b"not valid json at all";
@@ -530,6 +543,7 @@ mod tests {
         assert_eq!(resp.status(), http::StatusCode::BAD_REQUEST);
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn wrong_content_type_still_returns_415() {
         let mut req =
@@ -540,6 +554,7 @@ mod tests {
         assert_eq!(resp.status(), http::StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn valid_deref_accesses_inner() {
         let body = br#"{"name":"Bob","email":"bob@example.com"}"#;
@@ -550,6 +565,7 @@ mod tests {
         assert_eq!(valid.name, "Bob");
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn valid_destructure_pattern() {
         let body = br#"{"name":"Charlie","email":"c@example.com"}"#;
@@ -560,6 +576,7 @@ mod tests {
         assert_eq!(json.name, "Charlie");
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn valid_query_composability() {
         #[derive(Debug, serde::Deserialize)]
@@ -583,6 +600,7 @@ mod tests {
         assert_eq!(result.unwrap().q, "rust");
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn valid_query_invalid_returns_422() {
         #[derive(Debug, serde::Deserialize)]
@@ -606,6 +624,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn valid_only_validates_once() {
         let body = br#"{"name":"Alice","email":"a@b.com"}"#;
@@ -615,6 +634,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[cfg(feature = "json")]
     #[test]
     fn validation_response_always_json_in_prod() {
         let _guard = crate::error::tests::lock_env();
