@@ -16,8 +16,10 @@ macros = ["dep:ladoo-macros"]
 test-server = ["dep:reqwest"]
 config = ["dep:toml"]
 validation = ["dep:validator"]
+auth-jwt = []
 
 [dependencies]
+async-trait = "0.1"
 bytes = "1"
 http = "1"
 http-body-util = "0.1"

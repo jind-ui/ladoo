@@ -76,6 +76,17 @@ impl Context {
         self.request
     }
 
+    /// Borrow the inner request.
+    ///
+    /// Used by auth middleware to pass the request to
+    /// [`AuthProvider::authenticate`](crate::auth::AuthProvider::authenticate)
+    /// without consuming the context. Not yet called outside tests — a
+    /// future task wires `AuthGuardMiddleware` into `Router`.
+    #[allow(dead_code)]
+    pub(crate) fn request(&self) -> &Request {
+        &self.request
+    }
+
     /// Insert a value into per-request state.
     ///
     /// Values inserted here are available to downstream middleware and
@@ -170,6 +181,15 @@ mod tests {
         let ctx = Context::new(req);
         let req = ctx.into_request();
         assert_eq!(req.path(), "/test");
+    }
+
+    #[test]
+    fn request_borrows_inner_without_consuming_context() {
+        let req = Request::test(Method::GET, "/test");
+        let ctx = Context::new(req);
+        assert_eq!(ctx.request().path(), "/test");
+        // ctx is still usable after borrowing the inner request.
+        assert_eq!(ctx.path(), "/test");
     }
 
     #[test]
