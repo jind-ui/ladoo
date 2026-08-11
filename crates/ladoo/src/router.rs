@@ -645,6 +645,28 @@ impl Router {
         self
     }
 
+    /// Attach an authentication provider to this route group.
+    ///
+    /// All routes in this router will require authentication via the
+    /// given provider. On success, the authenticated user is stored
+    /// in per-request state and available via [`Auth<T>`](crate::auth::Auth).
+    ///
+    /// This is sugar for `.use_mw(AuthGuardMiddleware::new(provider))`.
+    /// For custom auth flows, use [`.use_mw()`](Router::use_mw) directly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ladoo::prelude::*;
+    ///
+    /// let jwt = JwtAuth::<Claims>::hs256(b"secret");
+    /// App::new()
+    ///     .group("/api", |g| g.guard(jwt).get("/me", handler))
+    /// ```
+    pub fn guard<P: crate::auth::AuthProvider>(self, provider: P) -> Self {
+        self.use_mw(crate::auth::AuthGuardMiddleware::new(provider))
+    }
+
     /// Merge another router's routes into this one, prepending a prefix.
     ///
     /// Each route's path segments are reconstructed with the prefix

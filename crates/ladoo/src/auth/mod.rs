@@ -186,16 +186,14 @@ pub trait AuthProvider: Send + Sync + 'static {
 /// extract it with [`Auth<T>`]. On failure, short-circuits with the
 /// error response.
 ///
-/// Not yet wired into `Router` — a future task adds a `.guard()` method
-/// that constructs this middleware from an `AuthProvider`.
-#[allow(dead_code)]
+/// Constructed automatically by [`Router::guard()`](crate::router::Router::guard);
+/// most applications never build this directly.
 pub(crate) struct AuthGuardMiddleware<P: AuthProvider> {
     provider: Arc<P>,
 }
 
 impl<P: AuthProvider> AuthGuardMiddleware<P> {
     /// Wrap a provider in guard middleware.
-    #[allow(dead_code)]
     pub(crate) fn new(provider: P) -> Self {
         Self {
             provider: Arc::new(provider),
@@ -453,5 +451,43 @@ mod tests {
     fn has_role_empty() {
         let user = TestUser { name: "Bob".into() };
         assert!(user.roles().is_empty());
+    }
+
+    #[tokio::test]
+    async fn guard_integrates_with_router() {
+        use crate::app::App;
+
+        let provider = AlwaysAuth {
+            user: TestUser { name: "Alice".into() },
+        };
+
+        let client = App::test()
+            .group("/api", |r| {
+                r.guard(provider)
+                    .get("/me", |mut req: Request| {
+                        let user = Auth::<TestUser>::from_request(&mut req).unwrap();
+                        user.name.clone()
+                    })
+            })
+            .into_client();
+
+        let resp = client.get("/api/me").send().await;
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text(), "Alice");
+    }
+
+    #[tokio::test]
+    async fn guard_rejects_unauthenticated() {
+        use crate::app::App;
+
+        let client = App::test()
+            .group("/api", |r| {
+                r.guard(AlwaysDeny)
+                    .get("/me", |_req: Request| "unreachable")
+            })
+            .into_client();
+
+        let resp = client.get("/api/me").send().await;
+        assert_eq!(resp.status(), 401);
     }
 }
