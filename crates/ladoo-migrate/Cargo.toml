@@ -1,0 +1,38 @@
+[package]
+name = "ladoo-migrate"
+version = "0.1.0"
+edition = "2021"
+description = "A standalone SQL migration engine — replaces Flyway with better performance and smaller footprint"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/user/ladoo-migrate"
+keywords = ["migration", "database", "sql", "schema", "flyway"]
+categories = ["database"]
+
+[[bin]]
+name = "ladoo-migrate"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = []
+postgres = ["sqlx/postgres"]
+mysql = ["sqlx/mysql"]
+sqlite = ["sqlx/sqlite"]
+cli = ["postgres", "mysql", "sqlite", "dep:clap"]
+test-postgres = ["postgres"]
+test-mysql = ["mysql"]
+
+[dependencies]
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"], optional = true }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }

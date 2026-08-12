@@ -4,5 +4,6 @@ members = [
     "crates/ladoo",
     "crates/ladoo-macros",
     "crates/ladoo-cli",
+    "crates/ladoo-migrate",
     "examples/hello-world",
 ]
