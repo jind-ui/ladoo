@@ -467,9 +467,10 @@ impl<D: MigrationDriver> MigrationEngine<D> {
 
         let result = self.rollback_inner(strategy, &table).await;
 
-        LockManager::release(&self.driver, lock_key).await?;
+        let release_result = LockManager::release(&self.driver, lock_key).await;
 
         let mut report = result?;
+        release_result?;
         report.elapsed = start.elapsed();
         Ok(report)
     }
@@ -544,9 +545,11 @@ impl<D: MigrationDriver> MigrationEngine<D> {
 
         let result = self.repair_inner(source, strategy, &table).await;
 
-        LockManager::release(&self.driver, lock_key).await?;
+        let release_result = LockManager::release(&self.driver, lock_key).await;
 
-        result
+        let report = result?;
+        release_result?;
+        Ok(report)
     }
 
     async fn repair_inner(
@@ -654,9 +657,11 @@ impl<D: MigrationDriver> MigrationEngine<D> {
 
         let result = self.baseline_inner(source, version, &table).await;
 
-        LockManager::release(&self.driver, lock_key).await?;
+        let release_result = LockManager::release(&self.driver, lock_key).await;
 
-        result
+        result?;
+        release_result?;
+        Ok(())
     }
 
     async fn baseline_inner(
