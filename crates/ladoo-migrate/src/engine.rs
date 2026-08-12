@@ -760,6 +760,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn migrate_repeatable_failure_leaves_checksum_untouched_and_skips_later_ones() {
+        let (engine, mut source) = setup().await;
+        source.repeatable.push(make_repeatable(
+            "recalc_view",
+            "DROP VIEW IF EXISTS v; CREATE VIEW v AS SELECT 1;",
+        ));
+        source.repeatable.push(make_repeatable(
+            "other_view",
+            "DROP VIEW IF EXISTS v2; CREATE VIEW v2 AS SELECT 1;",
+        ));
+        engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap();
+        let original_checksum = source.repeatable[0].checksum.clone();
+        let untouched_checksum = source.repeatable[1].checksum.clone();
+
+        // Break the first repeatable's SQL (new checksum, invalid SQL) and
+        // also change the second one so we can prove it was never reached.
+        source.repeatable[0] = make_repeatable("recalc_view", "NOT VALID SQL AT ALL;");
+        source.repeatable[1] = make_repeatable(
+            "other_view",
+            "DROP VIEW IF EXISTS v2; CREATE VIEW v2 AS SELECT 2;",
+        );
+
+        let err = engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MigrateError::Sql(_)));
+
+        let status = engine.status(&source).await.unwrap();
+
+        // The failing repeatable's stored checksum is untouched — it never
+        // ran successfully, so `update_checksum` must never have been
+        // called for it.
+        let recalc = status
+            .applied
+            .iter()
+            .find(|a| a.name == "recalc_view")
+            .unwrap();
+        assert_eq!(recalc.checksum, original_checksum);
+
+        // The repeatable after the failing one in iteration order must
+        // never have been attempted either — its stored checksum is still
+        // the one from the very first successful migrate() call.
+        let other = status
+            .applied
+            .iter()
+            .find(|a| a.name == "other_view")
+            .unwrap();
+        assert_eq!(other.checksum, untouched_checksum);
+
+        // Both are still reported as changed, since neither's on-disk
+        // checksum matches what's stored.
+        assert_eq!(status.repeatable_changed.len(), 2);
+    }
+
+    #[tokio::test]
     async fn status_shows_applied_and_pending() {
         let (engine, mut source) = setup().await;
         source.versioned.push(make_migration(
