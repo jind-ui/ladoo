@@ -13,6 +13,12 @@
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 
+#[cfg(feature = "postgres")]
+pub mod postgres;
+
+#[cfg(feature = "mysql")]
+pub mod mysql;
+
 use async_trait::async_trait;
 
 use crate::migration::AppliedMigration;

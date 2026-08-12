@@ -148,12 +148,10 @@ impl TableManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // Tests require SQLite — run with `cargo test --features sqlite`
     #[cfg(feature = "sqlite")]
     mod with_sqlite {
-        use super::*;
+        use super::super::*;
         use crate::driver::sqlite::SqliteDriver;
 
         async fn setup() -> SqliteDriver {

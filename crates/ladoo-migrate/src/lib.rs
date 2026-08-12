@@ -62,5 +62,11 @@ pub use source::{InMemorySource, MigrationSource};
 #[cfg(feature = "sqlite")]
 pub use driver::sqlite::SqliteDriver;
 
+#[cfg(feature = "postgres")]
+pub use driver::postgres::PostgresDriver;
+
+#[cfg(feature = "mysql")]
+pub use driver::mysql::MysqlDriver;
+
 /// Convenience alias for results using [`MigrateError`].
 pub type Result<T> = std::result::Result<T, MigrateError>;
