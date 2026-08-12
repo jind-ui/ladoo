@@ -169,8 +169,16 @@ pub mod driver_conformance {
         assert!(status.pending.is_empty(), "no pending migrations");
 
         // Cleanup
-        engine.driver.execute("DROP TABLE IF EXISTS _conf_tbl").await.unwrap();
-        engine.driver.execute("DROP TABLE IF EXISTS _conformance_mig").await.unwrap();
+        engine
+            .driver
+            .execute("DROP TABLE IF EXISTS _conf_tbl")
+            .await
+            .unwrap();
+        engine
+            .driver
+            .execute("DROP TABLE IF EXISTS _conformance_mig")
+            .await
+            .unwrap();
     }
 
     async fn test_migrate_idempotent<D: MigrationDriver>(url: &str) {
@@ -190,12 +198,26 @@ pub mod driver_conformance {
             repeatable: vec![],
         };
 
-        engine.migrate(&source, None, MigrateOptions::default()).await.unwrap();
-        let report = engine.migrate(&source, None, MigrateOptions::default()).await.unwrap();
+        engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap();
+        let report = engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap();
         assert!(report.applied.is_empty(), "second migrate should be no-op");
 
-        engine.driver.execute("DROP TABLE IF EXISTS _idem_tbl").await.unwrap();
-        engine.driver.execute("DROP TABLE IF EXISTS _conformance_idem").await.unwrap();
+        engine
+            .driver
+            .execute("DROP TABLE IF EXISTS _idem_tbl")
+            .await
+            .unwrap();
+        engine
+            .driver
+            .execute("DROP TABLE IF EXISTS _conformance_idem")
+            .await
+            .unwrap();
     }
 
     async fn test_rollback<D: MigrationDriver>(url: &str) {
@@ -215,14 +237,21 @@ pub mod driver_conformance {
             repeatable: vec![],
         };
 
-        engine.migrate(&source, None, MigrateOptions::default()).await.unwrap();
+        engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap();
         let report = engine.rollback(RollbackStrategy::Last).await.unwrap();
         assert_eq!(report.rolled_back.len(), 1, "should rollback 1");
 
         let status = engine.status(&source).await.unwrap();
         assert!(status.applied.is_empty(), "nothing applied after rollback");
 
-        engine.driver.execute("DROP TABLE IF EXISTS _conformance_rb").await.unwrap();
+        engine
+            .driver
+            .execute("DROP TABLE IF EXISTS _conformance_rb")
+            .await
+            .unwrap();
     }
 
     async fn test_empty_migration<D: MigrationDriver>(url: &str) {
@@ -248,9 +277,20 @@ pub mod driver_conformance {
             repeatable: vec![],
         };
 
-        let report = engine.migrate(&source, None, MigrateOptions::default()).await.unwrap();
-        assert_eq!(report.applied.len(), 1, "empty migration should be recorded");
+        let report = engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            report.applied.len(),
+            1,
+            "empty migration should be recorded"
+        );
 
-        engine.driver.execute("DROP TABLE IF EXISTS _conformance_empty").await.unwrap();
+        engine
+            .driver
+            .execute("DROP TABLE IF EXISTS _conformance_empty")
+            .await
+            .unwrap();
     }
 }

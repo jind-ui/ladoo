@@ -258,8 +258,8 @@ mod tests {
     fn parse_filename_multibyte_chars_do_not_panic() {
         // Four 4-byte emoji place byte offset 15 mid-character, not on a
         // UTF-8 char boundary. Must return an error, not panic.
-        let err = parse_filename("\u{1f980}\u{1f980}\u{1f980}\u{1f980}_120000_test.sql")
-            .unwrap_err();
+        let err =
+            parse_filename("\u{1f980}\u{1f980}\u{1f980}\u{1f980}_120000_test.sql").unwrap_err();
         assert!(err.to_string().contains("YYYYMMDD_HHMMSS"));
     }
 
@@ -405,8 +405,7 @@ CREATE TABLE users (id INT);";
     #[test]
     fn parse_missing_up_directive() {
         let content = "CREATE TABLE users (id INT);";
-        let err =
-            parse_migration_file("20260810_120000_create_users.sql", content).unwrap_err();
+        let err = parse_migration_file("20260810_120000_create_users.sql", content).unwrap_err();
         assert!(err.to_string().contains("missing -- @up"));
     }
 
@@ -505,8 +504,7 @@ CREATE INDEX idx ON t(c);";
 CREATE INDEX idx ON t(c);";
 
         let m_with = parse_migration_file("20260810_120000_test.sql", content_with).unwrap();
-        let m_without =
-            parse_migration_file("20260810_120000_test.sql", content_without).unwrap();
+        let m_without = parse_migration_file("20260810_120000_test.sql", content_without).unwrap();
         assert_eq!(m_with.checksum, m_without.checksum);
     }
 

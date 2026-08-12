@@ -174,11 +174,7 @@ mod tests {
     #[test]
     fn returns_empty_when_no_repeatable_dir() {
         let tmp = TempDir::new().unwrap();
-        write_migration(
-            tmp.path(),
-            "20260810_120000_init.sql",
-            "-- @up\nSELECT 1;",
-        );
+        write_migration(tmp.path(), "20260810_120000_init.sql", "-- @up\nSELECT 1;");
 
         let source = FilesystemSource::new(tmp.path());
         assert!(source.load_repeatable().unwrap().is_empty());
@@ -194,11 +190,7 @@ mod tests {
     #[test]
     fn ignores_non_sql_files() {
         let tmp = TempDir::new().unwrap();
-        write_migration(
-            tmp.path(),
-            "20260810_120000_init.sql",
-            "-- @up\nSELECT 1;",
-        );
+        write_migration(tmp.path(), "20260810_120000_init.sql", "-- @up\nSELECT 1;");
         fs::write(tmp.path().join("README.md"), "# Migrations").unwrap();
         fs::write(tmp.path().join(".gitkeep"), "").unwrap();
 
@@ -210,11 +202,7 @@ mod tests {
     #[test]
     fn parse_error_propagated() {
         let tmp = TempDir::new().unwrap();
-        write_migration(
-            tmp.path(),
-            "20260810_120000_bad.sql",
-            "no markers here",
-        );
+        write_migration(tmp.path(), "20260810_120000_bad.sql", "no markers here");
 
         let source = FilesystemSource::new(tmp.path());
         let err = source.load_versioned().unwrap_err();

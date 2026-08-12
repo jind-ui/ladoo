@@ -17,7 +17,10 @@ use crate::brand;
 /// Build the `--help`/`-h` summary text, combining [`brand::DISPLAY_NAME`]
 /// with a one-line description of what the tool does.
 fn about_text() -> String {
-    format!("{} — a standalone SQL migration engine", brand::DISPLAY_NAME)
+    format!(
+        "{} — a standalone SQL migration engine",
+        brand::DISPLAY_NAME
+    )
 }
 
 /// Top-level CLI application.

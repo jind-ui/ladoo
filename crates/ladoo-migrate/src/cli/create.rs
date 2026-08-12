@@ -152,17 +152,10 @@ mod tests {
     #[test]
     fn write_migration_creates_file() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let path = write_migration(
-            tmp.path(),
-            "20260810_120000_test.sql",
-            "-- @up\nSELECT 1;",
-        )
-        .unwrap();
+        let path =
+            write_migration(tmp.path(), "20260810_120000_test.sql", "-- @up\nSELECT 1;").unwrap();
         assert!(path.exists());
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            "-- @up\nSELECT 1;"
-        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "-- @up\nSELECT 1;");
     }
 
     #[test]

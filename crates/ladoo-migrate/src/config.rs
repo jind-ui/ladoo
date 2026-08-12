@@ -82,10 +82,7 @@ impl DatabaseConfig {
     /// Returns [`MigrateError::Config`] if the env var is not set.
     pub fn resolve_url(&self) -> Result<String, MigrateError> {
         std::env::var(&self.url_env).map_err(|_| {
-            MigrateError::Config(format!(
-                "environment variable {} is not set",
-                self.url_env
-            ))
+            MigrateError::Config(format!("environment variable {} is not set", self.url_env))
         })
     }
 

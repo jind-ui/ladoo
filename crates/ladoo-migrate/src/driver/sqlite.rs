@@ -202,7 +202,9 @@ mod tests {
             .unwrap();
 
         let mut tx = driver.begin().await.unwrap();
-        tx.execute("INSERT INTO test (id) VALUES (42)").await.unwrap();
+        tx.execute("INSERT INTO test (id) VALUES (42)")
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
 
         let rows = sqlx::query("SELECT id FROM test")
@@ -221,7 +223,9 @@ mod tests {
             .unwrap();
 
         let mut tx = driver.begin().await.unwrap();
-        tx.execute("INSERT INTO test (id) VALUES (42)").await.unwrap();
+        tx.execute("INSERT INTO test (id) VALUES (42)")
+            .await
+            .unwrap();
         tx.rollback().await.unwrap();
 
         let rows = sqlx::query("SELECT id FROM test")
@@ -281,7 +285,10 @@ mod tests {
             .await
             .unwrap();
 
-        let applied = driver.query_applied_migrations("_migrations").await.unwrap();
+        let applied = driver
+            .query_applied_migrations("_migrations")
+            .await
+            .unwrap();
         assert!(applied.is_empty());
     }
 
@@ -312,7 +319,10 @@ mod tests {
             .await
             .unwrap();
 
-        let applied = driver.query_applied_migrations("_migrations").await.unwrap();
+        let applied = driver
+            .query_applied_migrations("_migrations")
+            .await
+            .unwrap();
         assert_eq!(applied.len(), 1);
         assert_eq!(applied[0].version, "20260810_120000");
         assert_eq!(applied[0].name, "create_users");
@@ -347,7 +357,10 @@ mod tests {
             .await
             .unwrap();
 
-        let applied = driver.query_applied_migrations("_migrations").await.unwrap();
+        let applied = driver
+            .query_applied_migrations("_migrations")
+            .await
+            .unwrap();
         assert_eq!(applied.len(), 1);
         assert_eq!(applied[0].status, MigrationStatus::Applied);
         assert!(applied[0].down_sql.is_none());

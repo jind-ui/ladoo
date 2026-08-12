@@ -199,7 +199,11 @@ async fn run(cli: Cli) -> Result<ExitCode, ladoo_migrate::MigrateError> {
             let report = engine.repair(&source, strategy).await?;
             println!(
                 "Repair {}: {} (version: {})",
-                if report.success { "succeeded" } else { "failed" },
+                if report.success {
+                    "succeeded"
+                } else {
+                    "failed"
+                },
                 report.action,
                 report.version
             );
