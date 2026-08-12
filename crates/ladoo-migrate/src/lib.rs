@@ -35,6 +35,7 @@
 
 pub mod brand;
 pub mod checksum;
+pub mod driver;
 pub mod error;
 pub mod migration;
 pub mod source;
@@ -44,6 +45,9 @@ pub use error::MigrateError;
 pub use migration::{AppliedMigration, Migration, MigrationStatus};
 pub use source::filesystem::FilesystemSource;
 pub use source::{InMemorySource, MigrationSource};
+
+#[cfg(feature = "sqlite")]
+pub use driver::sqlite::SqliteDriver;
 
 /// Convenience alias for results using [`MigrateError`].
 pub type Result<T> = std::result::Result<T, MigrateError>;

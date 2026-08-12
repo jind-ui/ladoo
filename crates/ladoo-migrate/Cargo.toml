@@ -21,6 +21,7 @@ sqlite = ["sqlx/sqlite"]
 cli = ["postgres", "mysql", "sqlite", "dep:clap"]
 test-postgres = ["postgres"]
 test-mysql = ["mysql"]
+test-sqlite = ["sqlite"]
 
 [dependencies]
 async-trait = "0.1"
