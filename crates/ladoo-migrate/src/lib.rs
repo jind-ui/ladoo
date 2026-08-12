@@ -37,6 +37,7 @@ pub mod brand;
 pub mod checksum;
 pub mod error;
 pub mod migration;
+pub mod source;
 
 pub use checksum::compute_checksum;
 pub use error::MigrateError;
