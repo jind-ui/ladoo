@@ -24,13 +24,13 @@
 //!
 //! ```bash
 //! # Apply all pending migrations
-//! ladoo-migrate db migrate
+//! ladoo-migrate migrate
 //!
 //! # Show migration status
-//! ladoo-migrate db status
+//! ladoo-migrate status
 //!
 //! # Create a new migration
-//! ladoo-migrate db create add_users_table
+//! ladoo-migrate create add_users_table
 //! ```
 
 pub mod brand;

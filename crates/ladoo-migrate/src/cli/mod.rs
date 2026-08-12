@@ -1,8 +1,7 @@
 //! CLI entry point and command definitions.
 //!
-//! The CLI is feature-gated behind `cli`. It provides the `db` subcommand
-//! group with commands: `migrate`, `rollback`, `status`, `create`,
-//! `repair`, and `baseline`.
+//! The CLI is feature-gated behind `cli`. It provides top-level commands:
+//! `migrate`, `rollback`, `status`, `create`, `repair`, and `baseline`.
 
 pub mod baseline;
 pub mod create;
