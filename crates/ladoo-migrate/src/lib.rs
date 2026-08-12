@@ -35,6 +35,7 @@
 
 pub mod brand;
 pub mod checksum;
+pub mod config;
 pub mod driver;
 pub mod engine;
 pub mod error;
@@ -45,6 +46,7 @@ pub mod source;
 pub mod table;
 
 pub use checksum::compute_checksum;
+pub use config::{DatabaseConfig, MigrateConfig};
 pub use engine::{
     EngineConfig, MigrateOptions, MigrateReport, MigratedEntry, MigrationEngine, RepairReport,
     RepairStrategy, RollbackReport, RollbackStrategy, StatusReport,
