@@ -205,7 +205,6 @@ mod tests {
         tx.execute("INSERT INTO test (id) VALUES (42)").await.unwrap();
         tx.commit().await.unwrap();
 
-        // Verify committed
         let rows = sqlx::query("SELECT id FROM test")
             .fetch_all(&driver.pool)
             .await
@@ -225,7 +224,6 @@ mod tests {
         tx.execute("INSERT INTO test (id) VALUES (42)").await.unwrap();
         tx.rollback().await.unwrap();
 
-        // Verify rolled back
         let rows = sqlx::query("SELECT id FROM test")
             .fetch_all(&driver.pool)
             .await
@@ -235,21 +233,12 @@ mod tests {
 
     #[tokio::test]
     async fn execute_after_commit_fails() {
-        let driver = SqliteDriver::connect("sqlite::memory:").await.unwrap();
-        driver
-            .execute("CREATE TABLE test (id INTEGER)")
-            .await
-            .unwrap();
-
-        let mut tx = SqliteTransaction {
-            inner: None,
-        };
+        let mut tx = SqliteTransaction { inner: None };
         let err = tx
             .execute("INSERT INTO test (id) VALUES (1)")
             .await
             .unwrap_err();
         assert!(matches!(err, MigrateError::Sql(_)));
-        let _ = driver;
     }
 
     #[tokio::test]
