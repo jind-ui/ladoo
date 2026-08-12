@@ -2,9 +2,11 @@
 //!
 //! [`MigrationEngine`] is the central coordinator. It owns a
 //! [`MigrationDriver`] and an [`EngineConfig`], and exposes high-level
-//! operations: [`migrate`](MigrationEngine::migrate) and
-//! [`status`](MigrationEngine::status). Rollback and repair are added
-//! in a later phase of the crate.
+//! operations: [`migrate`](MigrationEngine::migrate),
+//! [`status`](MigrationEngine::status),
+//! [`rollback`](MigrationEngine::rollback),
+//! [`repair`](MigrationEngine::repair), and
+//! [`baseline`](MigrationEngine::baseline).
 //!
 //! The engine handles all business logic — drivers provide only raw SQL.
 
@@ -84,6 +86,50 @@ pub struct StatusReport {
     pub pending: Vec<Migration>,
     /// Repeatable migrations whose checksum has changed since last applied.
     pub repeatable_changed: Vec<Migration>,
+}
+
+/// Strategy for the [`rollback`](MigrationEngine::rollback) operation.
+#[derive(Debug, Clone)]
+pub enum RollbackStrategy {
+    /// Rollback the most recently applied migration.
+    Last,
+    /// Rollback the last N migrations.
+    Steps(usize),
+    /// Rollback all migrations applied after this version.
+    ToVersion(String),
+}
+
+/// Report from a [`rollback`](MigrationEngine::rollback) operation.
+#[derive(Debug)]
+pub struct RollbackReport {
+    /// Versions that were rolled back, in the order they were rolled back.
+    pub rolled_back: Vec<String>,
+    /// Total wall-clock time.
+    pub elapsed: Duration,
+}
+
+/// Strategy for the [`repair`](MigrationEngine::repair) operation.
+#[derive(Debug, Clone)]
+pub enum RepairStrategy {
+    /// Re-run the PARTIAL migration's `@up` SQL.
+    Retry,
+    /// Rollback the PARTIAL migration using its stored `@down` SQL.
+    Rollback,
+    /// Mark the PARTIAL migration as applied (last resort).
+    Skip,
+    /// Update the stored checksum for a migration after an intentional file edit.
+    UpdateChecksum(String),
+}
+
+/// Report from a [`repair`](MigrationEngine::repair) operation.
+#[derive(Debug)]
+pub struct RepairReport {
+    /// Description of the action taken.
+    pub action: String,
+    /// Version of the repaired migration.
+    pub version: String,
+    /// Whether the repair succeeded.
+    pub success: bool,
 }
 
 /// Build the `INSERT` statement used to record a migration inside an
@@ -400,6 +446,245 @@ impl<D: MigrationDriver> MigrationEngine<D> {
             pending,
             repeatable_changed,
         })
+    }
+
+    /// Rollback migrations according to the given strategy.
+    ///
+    /// Reads stored `@down` SQL from the tracking table — rollback works
+    /// even after the migration file has been deleted from disk. Refuses
+    /// to run if any migration is stuck in PARTIAL state (run
+    /// [`repair`](Self::repair) first), and refuses to rollback a
+    /// migration whose `@down` SQL was never stored (`@down(skip)`).
+    pub async fn rollback(
+        &self,
+        strategy: RollbackStrategy,
+    ) -> Result<RollbackReport, MigrateError> {
+        let start = Instant::now();
+        let lock_key = self.lock_key();
+        let table = self.config.migrations_table.clone();
+
+        LockManager::acquire(&self.driver, lock_key).await?;
+
+        let result = self.rollback_inner(strategy, &table).await;
+
+        LockManager::release(&self.driver, lock_key).await?;
+
+        let mut report = result?;
+        report.elapsed = start.elapsed();
+        Ok(report)
+    }
+
+    async fn rollback_inner(
+        &self,
+        strategy: RollbackStrategy,
+        table: &str,
+    ) -> Result<RollbackReport, MigrateError> {
+        TableManager::ensure_table(&self.driver, table).await?;
+        let applied = self.driver.query_applied_migrations(table).await?;
+
+        for am in &applied {
+            if am.status == MigrationStatus::Partial {
+                return Err(MigrateError::PartialBlocking {
+                    version: am.version.clone(),
+                });
+            }
+        }
+
+        let to_rollback: Vec<&AppliedMigration> = match &strategy {
+            RollbackStrategy::Last => applied.last().into_iter().collect(),
+            RollbackStrategy::Steps(n) => applied.iter().rev().take(*n).collect(),
+            RollbackStrategy::ToVersion(v) => applied
+                .iter()
+                .rev()
+                .take_while(|am| am.version.as_str() > v.as_str())
+                .collect(),
+        };
+
+        let mut rolled_back = Vec::new();
+
+        for am in &to_rollback {
+            let Some(down_sql) = am.down_sql.as_deref() else {
+                return Err(MigrateError::RollbackSkipped {
+                    version: am.version.clone(),
+                    reason: "no @down block stored".into(),
+                });
+            };
+
+            let mut tx = self.driver.begin().await?;
+            tx.execute(down_sql).await?;
+            let delete_sql = format!("DELETE FROM {table} WHERE version = '{}'", am.version);
+            tx.execute(&delete_sql).await?;
+            tx.commit().await?;
+
+            rolled_back.push(am.version.clone());
+        }
+
+        Ok(RollbackReport {
+            rolled_back,
+            elapsed: Duration::ZERO,
+        })
+    }
+
+    /// Repair a migration stuck in PARTIAL state.
+    ///
+    /// Four strategies: retry (re-run the `@up` SQL), rollback (use the
+    /// stored `@down` SQL), skip (mark PARTIAL as applied without
+    /// re-running anything — a last resort), or update-checksum (fix the
+    /// stored checksum after an intentional file edit; does not require a
+    /// PARTIAL migration to exist).
+    pub async fn repair(
+        &self,
+        source: &impl MigrationSource,
+        strategy: RepairStrategy,
+    ) -> Result<RepairReport, MigrateError> {
+        let lock_key = self.lock_key();
+        let table = self.config.migrations_table.clone();
+
+        LockManager::acquire(&self.driver, lock_key).await?;
+
+        let result = self.repair_inner(source, strategy, &table).await;
+
+        LockManager::release(&self.driver, lock_key).await?;
+
+        result
+    }
+
+    async fn repair_inner(
+        &self,
+        source: &impl MigrationSource,
+        strategy: RepairStrategy,
+        table: &str,
+    ) -> Result<RepairReport, MigrateError> {
+        TableManager::ensure_table(&self.driver, table).await?;
+
+        if let RepairStrategy::UpdateChecksum(version) = &strategy {
+            let pending = source.load_versioned()?;
+            let migration = pending
+                .iter()
+                .find(|m| &m.version == version)
+                .ok_or_else(|| MigrateError::MigrationNotFound {
+                    version: version.clone(),
+                })?;
+            TableManager::update_checksum(&self.driver, table, version, &migration.checksum)
+                .await?;
+            return Ok(RepairReport {
+                action: "update-checksum".into(),
+                version: version.clone(),
+                success: true,
+            });
+        }
+
+        let applied = self.driver.query_applied_migrations(table).await?;
+        let partial = applied
+            .iter()
+            .find(|am| am.status == MigrationStatus::Partial)
+            .ok_or_else(|| MigrateError::Config("no migration in PARTIAL state".into()))?;
+
+        let version = partial.version.clone();
+
+        match strategy {
+            RepairStrategy::Retry => {
+                self.driver.execute(&partial.up_sql).await?;
+                TableManager::update_status(
+                    &self.driver,
+                    table,
+                    &version,
+                    MigrationStatus::Applied,
+                )
+                .await?;
+                Ok(RepairReport {
+                    action: "retry".into(),
+                    version,
+                    success: true,
+                })
+            }
+            RepairStrategy::Rollback => {
+                let down_sql =
+                    partial
+                        .down_sql
+                        .as_deref()
+                        .ok_or_else(|| MigrateError::RollbackSkipped {
+                            version: version.clone(),
+                            reason: "no @down SQL stored".into(),
+                        })?;
+                self.driver.execute(down_sql).await?;
+                TableManager::delete_migration(&self.driver, table, &version).await?;
+                Ok(RepairReport {
+                    action: "rollback".into(),
+                    version,
+                    success: true,
+                })
+            }
+            RepairStrategy::Skip => {
+                TableManager::update_status(
+                    &self.driver,
+                    table,
+                    &version,
+                    MigrationStatus::Applied,
+                )
+                .await?;
+                Ok(RepairReport {
+                    action: "skip".into(),
+                    version,
+                    success: true,
+                })
+            }
+            RepairStrategy::UpdateChecksum(_) => unreachable!(
+                "UpdateChecksum is handled above before a PARTIAL migration is required"
+            ),
+        }
+    }
+
+    /// Mark an existing database as being at a specific migration version.
+    ///
+    /// Creates the tracking table and records every migration up to and
+    /// including `version` as applied, without executing any SQL. Used to
+    /// adopt this tool on a database whose schema was created some other
+    /// way. Fails if the tracking table already has entries — baseline is
+    /// only for brand-new adoption, not for editing history.
+    pub async fn baseline(
+        &self,
+        source: &impl MigrationSource,
+        version: &str,
+    ) -> Result<(), MigrateError> {
+        let lock_key = self.lock_key();
+        let table = self.config.migrations_table.clone();
+
+        LockManager::acquire(&self.driver, lock_key).await?;
+
+        let result = self.baseline_inner(source, version, &table).await;
+
+        LockManager::release(&self.driver, lock_key).await?;
+
+        result
+    }
+
+    async fn baseline_inner(
+        &self,
+        source: &impl MigrationSource,
+        version: &str,
+        table: &str,
+    ) -> Result<(), MigrateError> {
+        TableManager::ensure_table(&self.driver, table).await?;
+
+        let existing = self.driver.query_applied_migrations(table).await?;
+        if !existing.is_empty() {
+            return Err(MigrateError::Config(
+                "cannot baseline: migrations table already has entries".into(),
+            ));
+        }
+
+        let all = source.load_versioned()?;
+        let mut order = 1i64;
+        for m in &all {
+            if m.version.as_str() > version {
+                break;
+            }
+            TableManager::record_migration(&self.driver, table, m, order).await?;
+            order += 1;
+        }
+
+        Ok(())
     }
 }
 
@@ -1011,5 +1296,389 @@ mod tests {
             },
         );
         assert_eq!(engine.lock_key(), 999);
+    }
+
+    #[tokio::test]
+    async fn rollback_last() {
+        let (engine, mut source) = setup().await;
+        source.versioned.push(make_migration(
+            "20260810_100000",
+            "a",
+            "CREATE TABLE a (id INTEGER);",
+        ));
+        source.versioned.push(make_migration(
+            "20260810_120000",
+            "b",
+            "CREATE TABLE b (id INTEGER);",
+        ));
+
+        engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap();
+
+        let report = engine.rollback(RollbackStrategy::Last).await.unwrap();
+        assert_eq!(report.rolled_back, vec!["20260810_120000"]);
+
+        let status = engine.status(&source).await.unwrap();
+        assert_eq!(status.applied.len(), 1);
+        assert_eq!(status.pending.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn rollback_steps() {
+        let (engine, mut source) = setup().await;
+        source.versioned.push(make_migration(
+            "20260810_100000",
+            "a",
+            "CREATE TABLE a (id INTEGER);",
+        ));
+        source.versioned.push(make_migration(
+            "20260810_120000",
+            "b",
+            "CREATE TABLE b (id INTEGER);",
+        ));
+        source.versioned.push(make_migration(
+            "20260810_140000",
+            "c",
+            "CREATE TABLE c (id INTEGER);",
+        ));
+
+        engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap();
+
+        let report = engine.rollback(RollbackStrategy::Steps(2)).await.unwrap();
+        assert_eq!(report.rolled_back.len(), 2);
+
+        let status = engine.status(&source).await.unwrap();
+        assert_eq!(status.applied.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn rollback_to_version() {
+        let (engine, mut source) = setup().await;
+        source.versioned.push(make_migration(
+            "20260810_100000",
+            "a",
+            "CREATE TABLE a (id INTEGER);",
+        ));
+        source.versioned.push(make_migration(
+            "20260810_120000",
+            "b",
+            "CREATE TABLE b (id INTEGER);",
+        ));
+        source.versioned.push(make_migration(
+            "20260810_140000",
+            "c",
+            "CREATE TABLE c (id INTEGER);",
+        ));
+
+        engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap();
+
+        let report = engine
+            .rollback(RollbackStrategy::ToVersion("20260810_100000".into()))
+            .await
+            .unwrap();
+        assert_eq!(report.rolled_back.len(), 2);
+
+        let status = engine.status(&source).await.unwrap();
+        assert_eq!(status.applied.len(), 1);
+        assert_eq!(status.applied[0].version, "20260810_100000");
+    }
+
+    #[tokio::test]
+    async fn rollback_no_down_sql_errors() {
+        let (engine, mut source) = setup().await;
+        source.versioned.push(Migration {
+            version: "20260810_120000".into(),
+            name: "no_down".into(),
+            up_sql: "CREATE TABLE x (id INTEGER);".into(),
+            down_sql: None,
+            down_skip_reason: Some("irreversible".into()),
+            checksum: crate::checksum::compute_checksum("CREATE TABLE x (id INTEGER);"),
+            no_transaction: false,
+            requires: vec![],
+            repeatable: false,
+        });
+
+        engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap();
+
+        let err = engine.rollback(RollbackStrategy::Last).await.unwrap_err();
+        assert!(matches!(err, MigrateError::RollbackSkipped { .. }));
+        assert!(err.to_string().contains("no @down"));
+    }
+
+    #[tokio::test]
+    async fn rollback_blocked_by_partial_state() {
+        let (engine, mut source) = setup().await;
+        let mut m = make_migration("20260810_100000", "bad", "NOT VALID SQL AT ALL;");
+        m.no_transaction = true;
+        source.versioned.push(m);
+        let _ = engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await;
+
+        let err = engine.rollback(RollbackStrategy::Last).await.unwrap_err();
+        assert!(matches!(err, MigrateError::PartialBlocking { .. }));
+    }
+
+    #[tokio::test]
+    async fn rollback_empty_history_is_a_noop() {
+        let (engine, _source) = setup().await;
+        let report = engine.rollback(RollbackStrategy::Last).await.unwrap();
+        assert!(report.rolled_back.is_empty());
+    }
+
+    #[tokio::test]
+    async fn repair_retry() {
+        let (engine, source) = setup().await;
+
+        TableManager::ensure_table(&engine.driver, "_migrations")
+            .await
+            .unwrap();
+        let m = Migration {
+            version: "20260810_120000".into(),
+            name: "broken".into(),
+            up_sql: "CREATE TABLE IF NOT EXISTS broken (id INTEGER);".into(),
+            down_sql: None,
+            down_skip_reason: None,
+            checksum: "abc".into(),
+            no_transaction: true,
+            requires: vec![],
+            repeatable: false,
+        };
+        TableManager::record_partial(&engine.driver, "_migrations", &m, 1)
+            .await
+            .unwrap();
+
+        let report = engine.repair(&source, RepairStrategy::Retry).await.unwrap();
+        assert_eq!(report.action, "retry");
+        assert!(report.success);
+        assert_eq!(report.version, "20260810_120000");
+
+        let status = engine.status(&source).await.unwrap();
+        assert_eq!(status.applied[0].status, MigrationStatus::Applied);
+    }
+
+    #[tokio::test]
+    async fn repair_rollback() {
+        let (engine, source) = setup().await;
+
+        TableManager::ensure_table(&engine.driver, "_migrations")
+            .await
+            .unwrap();
+        let m = Migration {
+            version: "20260810_120000".into(),
+            name: "broken".into(),
+            up_sql: "CREATE TABLE broken (id INTEGER);".into(),
+            down_sql: Some("DROP TABLE IF EXISTS broken;".into()),
+            down_skip_reason: None,
+            checksum: "abc".into(),
+            no_transaction: true,
+            requires: vec![],
+            repeatable: false,
+        };
+        TableManager::record_partial(&engine.driver, "_migrations", &m, 1)
+            .await
+            .unwrap();
+
+        let report = engine
+            .repair(&source, RepairStrategy::Rollback)
+            .await
+            .unwrap();
+        assert_eq!(report.action, "rollback");
+        assert!(report.success);
+
+        let status = engine.status(&source).await.unwrap();
+        assert!(status.applied.is_empty());
+    }
+
+    #[tokio::test]
+    async fn repair_rollback_without_down_sql_errors() {
+        let (engine, source) = setup().await;
+
+        TableManager::ensure_table(&engine.driver, "_migrations")
+            .await
+            .unwrap();
+        let m = Migration {
+            version: "20260810_120000".into(),
+            name: "broken".into(),
+            up_sql: "CREATE TABLE broken (id INTEGER);".into(),
+            down_sql: None,
+            down_skip_reason: Some("irreversible".into()),
+            checksum: "abc".into(),
+            no_transaction: true,
+            requires: vec![],
+            repeatable: false,
+        };
+        TableManager::record_partial(&engine.driver, "_migrations", &m, 1)
+            .await
+            .unwrap();
+
+        let err = engine
+            .repair(&source, RepairStrategy::Rollback)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MigrateError::RollbackSkipped { .. }));
+    }
+
+    #[tokio::test]
+    async fn repair_skip() {
+        let (engine, source) = setup().await;
+
+        TableManager::ensure_table(&engine.driver, "_migrations")
+            .await
+            .unwrap();
+        let m = Migration {
+            version: "20260810_120000".into(),
+            name: "broken".into(),
+            up_sql: "CREATE TABLE broken (id INTEGER);".into(),
+            down_sql: None,
+            down_skip_reason: None,
+            checksum: "abc".into(),
+            no_transaction: true,
+            requires: vec![],
+            repeatable: false,
+        };
+        TableManager::record_partial(&engine.driver, "_migrations", &m, 1)
+            .await
+            .unwrap();
+
+        let report = engine.repair(&source, RepairStrategy::Skip).await.unwrap();
+        assert_eq!(report.action, "skip");
+        assert!(report.success);
+
+        let status = engine.status(&source).await.unwrap();
+        assert_eq!(status.applied[0].status, MigrationStatus::Applied);
+    }
+
+    #[tokio::test]
+    async fn repair_update_checksum() {
+        let (engine, mut source) = setup().await;
+        source.versioned.push(make_migration(
+            "20260810_120000",
+            "a",
+            "CREATE TABLE a (id INTEGER);",
+        ));
+        engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap();
+
+        source.versioned[0] = make_migration(
+            "20260810_120000",
+            "a",
+            "CREATE TABLE a (id INTEGER, extra TEXT);",
+        );
+        let new_checksum = source.versioned[0].checksum.clone();
+
+        let report = engine
+            .repair(
+                &source,
+                RepairStrategy::UpdateChecksum("20260810_120000".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(report.action, "update-checksum");
+        assert!(report.success);
+
+        let status = engine.status(&source).await.unwrap();
+        assert_eq!(status.applied[0].checksum, new_checksum);
+    }
+
+    #[tokio::test]
+    async fn repair_update_checksum_missing_migration_errors() {
+        let (engine, source) = setup().await;
+
+        let err = engine
+            .repair(
+                &source,
+                RepairStrategy::UpdateChecksum("20260810_120000".into()),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MigrateError::MigrationNotFound { .. }));
+    }
+
+    #[tokio::test]
+    async fn repair_without_partial_migration_errors() {
+        let (engine, source) = setup().await;
+
+        let err = engine.repair(&source, RepairStrategy::Skip).await.unwrap_err();
+        assert!(matches!(err, MigrateError::Config(_)));
+        assert!(err.to_string().contains("PARTIAL"));
+    }
+
+    #[tokio::test]
+    async fn baseline_records_up_to_version() {
+        let (engine, mut source) = setup().await;
+        source.versioned.push(make_migration(
+            "20260810_100000",
+            "a",
+            "CREATE TABLE a (id INTEGER);",
+        ));
+        source.versioned.push(make_migration(
+            "20260810_120000",
+            "b",
+            "CREATE TABLE b (id INTEGER);",
+        ));
+        source.versioned.push(make_migration(
+            "20260810_140000",
+            "c",
+            "CREATE TABLE c (id INTEGER);",
+        ));
+
+        engine.baseline(&source, "20260810_120000").await.unwrap();
+
+        let status = engine.status(&source).await.unwrap();
+        assert_eq!(status.applied.len(), 2);
+        assert_eq!(status.pending.len(), 1);
+        assert_eq!(status.pending[0].version, "20260810_140000");
+    }
+
+    #[tokio::test]
+    async fn baseline_fails_if_table_has_entries() {
+        let (engine, mut source) = setup().await;
+        source.versioned.push(make_migration(
+            "20260810_100000",
+            "a",
+            "CREATE TABLE a (id INTEGER);",
+        ));
+
+        engine
+            .migrate(&source, None, MigrateOptions::default())
+            .await
+            .unwrap();
+
+        let err = engine
+            .baseline(&source, "20260810_100000")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("already has entries"));
+    }
+
+    #[tokio::test]
+    async fn baseline_does_not_execute_sql() {
+        let (engine, mut source) = setup().await;
+        source.versioned.push(make_migration(
+            "20260810_100000",
+            "a",
+            "NOT VALID SQL AT ALL;",
+        ));
+
+        // baseline records the migration as applied without running its
+        // SQL, so even invalid SQL succeeds.
+        engine.baseline(&source, "20260810_100000").await.unwrap();
+
+        let status = engine.status(&source).await.unwrap();
+        assert_eq!(status.applied.len(), 1);
     }
 }

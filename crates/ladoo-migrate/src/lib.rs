@@ -46,7 +46,8 @@ pub mod table;
 
 pub use checksum::compute_checksum;
 pub use engine::{
-    EngineConfig, MigrateOptions, MigrateReport, MigratedEntry, MigrationEngine, StatusReport,
+    EngineConfig, MigrateOptions, MigrateReport, MigratedEntry, MigrationEngine, RepairReport,
+    RepairStrategy, RollbackReport, RollbackStrategy, StatusReport,
 };
 pub use error::MigrateError;
 pub use migration::{AppliedMigration, Migration, MigrationStatus};
