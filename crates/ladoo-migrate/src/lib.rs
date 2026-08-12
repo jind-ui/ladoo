@@ -34,9 +34,13 @@
 //! ```
 
 pub mod brand;
+pub mod checksum;
 pub mod error;
+pub mod migration;
 
+pub use checksum::compute_checksum;
 pub use error::MigrateError;
+pub use migration::{AppliedMigration, Migration, MigrationStatus};
 
 /// Convenience alias for results using [`MigrateError`].
 pub type Result<T> = std::result::Result<T, MigrateError>;
