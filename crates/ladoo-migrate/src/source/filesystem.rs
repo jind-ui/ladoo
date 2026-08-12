@@ -56,20 +56,27 @@ impl FilesystemSource {
             let entry = entry?;
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("sql") {
-                let filename = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .ok_or_else(|| MigrateError::Parse {
-                        file: path.display().to_string(),
-                        message: "invalid filename encoding".into(),
-                    })?
-                    .to_string();
+                let filename = filename_str(&path)?;
                 let content = fs::read_to_string(&path)?;
                 files.push((filename, content));
             }
         }
         Ok(files)
     }
+}
+
+/// Returns a path's filename as an owned `String`.
+///
+/// Returns `MigrateError::Parse` if the path has no filename component or
+/// the filename is not valid UTF-8.
+fn filename_str(path: &Path) -> Result<String, MigrateError> {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string)
+        .ok_or_else(|| MigrateError::Parse {
+            file: path.display().to_string(),
+            message: "invalid filename encoding".into(),
+        })
 }
 
 impl MigrationSource for FilesystemSource {
@@ -93,7 +100,10 @@ impl MigrationSource for FilesystemSource {
         for (filename, content) in &files {
             migrations.push(parse_migration_file(filename, content)?);
         }
-        migrations.sort_by(|a, b| a.name.cmp(&b.name));
+        // Filename is `{version}_{name}.sql`, so sorting by version then
+        // name reproduces alphabetical filename order without needing to
+        // retain the original filename on `Migration`.
+        migrations.sort_by(|a, b| a.version.cmp(&b.version).then_with(|| a.name.cmp(&b.name)));
         Ok(migrations)
     }
 }
@@ -136,23 +146,29 @@ mod tests {
         let rep_dir = tmp.path().join("repeatable");
         fs::create_dir(&rep_dir).unwrap();
 
+        // Names are chosen so that sorting by `name` alone would give the
+        // opposite order to sorting by filename (version + name): "zzz"
+        // sorts after "aaa" by name, but its file has the earlier version,
+        // so it must come first when ordering by filename.
         write_migration(
             &rep_dir,
-            "20260810_120000_grants.sql",
-            "-- @up\n-- @repeatable\nGRANT SELECT ON users TO reader;",
+            "20260810_200000_aaa.sql",
+            "-- @up\n-- @repeatable\nCREATE OR REPLACE VIEW aaa AS SELECT 1;",
         );
         write_migration(
             &rep_dir,
-            "20260810_100000_views.sql",
-            "-- @up\n-- @repeatable\nCREATE OR REPLACE VIEW v AS SELECT 1;",
+            "20260810_100000_zzz.sql",
+            "-- @up\n-- @repeatable\nGRANT SELECT ON users TO reader;",
         );
 
         let source = FilesystemSource::new(tmp.path());
         let migrations = source.load_repeatable().unwrap();
 
         assert_eq!(migrations.len(), 2);
-        // Sorted by name alphabetically
-        assert!(migrations[0].name <= migrations[1].name);
+        // Filename order (20260810_100000_zzz.sql < 20260810_200000_aaa.sql),
+        // not name order (which would put "aaa" first).
+        assert_eq!(migrations[0].name, "zzz");
+        assert_eq!(migrations[1].name, "aaa");
     }
 
     #[test]
@@ -209,5 +225,27 @@ mod tests {
     fn dir_accessor() {
         let source = FilesystemSource::new("/some/path");
         assert_eq!(source.dir(), Path::new("/some/path"));
+    }
+
+    #[test]
+    fn filename_str_returns_valid_utf8_filename() {
+        let path = Path::new("/migrations/20260810_120000_init.sql");
+        assert_eq!(filename_str(path).unwrap(), "20260810_120000_init.sql");
+    }
+
+    // Exercises the non-UTF-8 branch via an in-memory `PathBuf` — no real
+    // file is created, since macOS (APFS) rejects invalid-UTF-8 filenames
+    // at the syscall level and this would otherwise be untestable there.
+    #[cfg(unix)]
+    #[test]
+    fn filename_str_rejects_non_utf8_filename() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let invalid = OsStr::from_bytes(b"\xFF\xFE_bad.sql");
+        let path = Path::new("/migrations").join(invalid);
+
+        let err = filename_str(&path).unwrap_err();
+        assert!(err.to_string().contains("invalid filename encoding"));
     }
 }
