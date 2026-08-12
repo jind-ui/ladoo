@@ -46,6 +46,7 @@ pub mod migration;
 pub mod plan;
 pub mod source;
 pub mod table;
+pub mod testing;
 
 pub use checksum::compute_checksum;
 pub use config::{DatabaseConfig, MigrateConfig};

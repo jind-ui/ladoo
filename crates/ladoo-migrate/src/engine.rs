@@ -171,7 +171,7 @@ fn insert_sql(
 /// and call [`migrate`](MigrationEngine::migrate) or
 /// [`status`](MigrationEngine::status).
 pub struct MigrationEngine<D: MigrationDriver> {
-    driver: D,
+    pub(crate) driver: D,
     config: EngineConfig,
 }
 
