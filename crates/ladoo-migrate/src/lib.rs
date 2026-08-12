@@ -37,8 +37,10 @@ pub mod brand;
 pub mod checksum;
 pub mod driver;
 pub mod error;
+pub mod lock;
 pub mod migration;
 pub mod source;
+pub mod table;
 
 pub use checksum::compute_checksum;
 pub use error::MigrateError;
