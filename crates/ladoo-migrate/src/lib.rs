@@ -36,15 +36,21 @@
 pub mod brand;
 pub mod checksum;
 pub mod driver;
+pub mod engine;
 pub mod error;
 pub mod lock;
 pub mod migration;
+pub mod plan;
 pub mod source;
 pub mod table;
 
 pub use checksum::compute_checksum;
+pub use engine::{
+    EngineConfig, MigrateOptions, MigrateReport, MigratedEntry, MigrationEngine, StatusReport,
+};
 pub use error::MigrateError;
 pub use migration::{AppliedMigration, Migration, MigrationStatus};
+pub use plan::MigrationPlan;
 pub use source::filesystem::FilesystemSource;
 pub use source::{InMemorySource, MigrationSource};
 
