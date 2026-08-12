@@ -73,10 +73,19 @@ pub mod driver_conformance {
             .expect("cleanup failed");
     }
 
+    /// Verify commit actually persists, rather than merely returning `Ok`.
+    ///
+    /// `execute` only reports success/failure — it doesn't expose row
+    /// access — so persistence is proven indirectly via a uniqueness
+    /// constraint: insert `id = 1` inside the transaction, commit, then
+    /// try to insert `id = 1` again outside the transaction. If the first
+    /// insert really persisted, the second insert collides and must fail.
+    /// A driver whose `commit` is a no-op (or secretly rolls back) would
+    /// let the second insert succeed, exposing the bug.
     async fn test_transaction_commit<D: MigrationDriver>(url: &str) {
         let driver = D::connect(url).await.unwrap();
         driver
-            .execute("CREATE TABLE IF NOT EXISTS _tx_test (id INTEGER)")
+            .execute("CREATE TABLE IF NOT EXISTS _tx_test (id INTEGER PRIMARY KEY)")
             .await
             .unwrap();
 
@@ -86,13 +95,29 @@ pub mod driver_conformance {
             .unwrap();
         tx.commit().await.unwrap();
 
+        let dup = driver.execute("INSERT INTO _tx_test (id) VALUES (1)").await;
+        assert!(
+            dup.is_err(),
+            "duplicate insert should fail after commit — row must have persisted"
+        );
+
         driver.execute("DROP TABLE _tx_test").await.unwrap();
     }
 
+    /// Verify rollback actually discards the change, rather than merely
+    /// returning `Ok`.
+    ///
+    /// Same uniqueness-constraint technique as [`test_transaction_commit`],
+    /// but inverted: insert `id = 1` inside the transaction, roll back,
+    /// then try to insert `id = 1` again outside the transaction. If the
+    /// first insert was really discarded, the second insert has no
+    /// conflict and must succeed. A driver whose `rollback` is a no-op
+    /// (or secretly commits) would leave the row in place, and the second
+    /// insert would collide and fail, exposing the bug.
     async fn test_transaction_rollback<D: MigrationDriver>(url: &str) {
         let driver = D::connect(url).await.unwrap();
         driver
-            .execute("CREATE TABLE IF NOT EXISTS _tx_rb_test (id INTEGER)")
+            .execute("CREATE TABLE IF NOT EXISTS _tx_rb_test (id INTEGER PRIMARY KEY)")
             .await
             .unwrap();
 
@@ -101,6 +126,11 @@ pub mod driver_conformance {
             .await
             .unwrap();
         tx.rollback().await.unwrap();
+
+        driver
+            .execute("INSERT INTO _tx_rb_test (id) VALUES (1)")
+            .await
+            .expect("insert should succeed after rollback — row must have been discarded");
 
         driver.execute("DROP TABLE _tx_rb_test").await.unwrap();
     }
