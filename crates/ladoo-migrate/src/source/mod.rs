@@ -1,12 +1,13 @@
 //! Migration source abstraction and implementations.
 //!
 //! A [`MigrationSource`] loads migrations from some storage — the
-//! filesystem (via `FilesystemSource`, added in a later task), an
-//! in-memory collection (via [`InMemorySource`]), or any custom backend.
+//! filesystem (via [`filesystem::FilesystemSource`]), an in-memory
+//! collection (via [`InMemorySource`]), or any custom backend.
 //!
 //! The engine never reads files directly — it always goes through a
 //! `MigrationSource`, making it trivial to test without touching disk.
 
+pub mod filesystem;
 pub mod parser;
 
 use crate::migration::Migration;

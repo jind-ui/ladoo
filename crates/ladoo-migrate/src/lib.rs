@@ -42,6 +42,8 @@ pub mod source;
 pub use checksum::compute_checksum;
 pub use error::MigrateError;
 pub use migration::{AppliedMigration, Migration, MigrationStatus};
+pub use source::filesystem::FilesystemSource;
+pub use source::{InMemorySource, MigrationSource};
 
 /// Convenience alias for results using [`MigrateError`].
 pub type Result<T> = std::result::Result<T, MigrateError>;
