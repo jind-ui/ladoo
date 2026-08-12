@@ -18,7 +18,7 @@ default = []
 postgres = ["sqlx/postgres"]
 mysql = ["sqlx/mysql"]
 sqlite = ["sqlx/sqlite"]
-cli = ["postgres", "mysql", "sqlite", "dep:clap"]
+cli = ["postgres", "mysql", "sqlite", "dep:clap", "dep:serde_json"]
 test-postgres = ["postgres"]
 test-mysql = ["mysql"]
 test-sqlite = ["sqlite"]
@@ -28,6 +28,7 @@ async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"], optional = true }
 serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"], optional = true }
 thiserror = "2"

@@ -35,6 +35,8 @@
 
 pub mod brand;
 pub mod checksum;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod config;
 pub mod driver;
 pub mod engine;
