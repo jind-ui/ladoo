@@ -1612,7 +1612,10 @@ mod tests {
     async fn repair_without_partial_migration_errors() {
         let (engine, source) = setup().await;
 
-        let err = engine.repair(&source, RepairStrategy::Skip).await.unwrap_err();
+        let err = engine
+            .repair(&source, RepairStrategy::Skip)
+            .await
+            .unwrap_err();
         assert!(matches!(err, MigrateError::Config(_)));
         assert!(err.to_string().contains("PARTIAL"));
     }
