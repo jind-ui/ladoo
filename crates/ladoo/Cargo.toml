@@ -29,6 +29,8 @@ hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1"] }
 jsonwebtoken = { version = "9", optional = true }
 ladoo-macros = { path = "../ladoo-macros", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
+# Required (not optional) because the health module produces JSON unconditionally.
+# All other JSON usage is gated behind the `json` feature.
 serde_json = "1"
 serde_urlencoded = { version = "0.7", optional = true }
 reqwest = { version = "0.12", features = ["json"], optional = true }
