@@ -9,7 +9,7 @@ keywords = ["web", "framework", "http", "server", "async"]
 categories = ["web-programming::http-server"]
 
 [features]
-default = ["json", "macros", "config", "logging"]
+default = ["json", "macros", "config", "logging", "cache"]
 json = ["dep:serde", "dep:serde_urlencoded"]
 logging = ["dep:tracing", "dep:tracing-subscriber", "dep:uuid"]
 macros = ["dep:ladoo-macros"]
@@ -17,6 +17,7 @@ test-server = ["dep:reqwest"]
 config = ["dep:toml"]
 validation = ["dep:validator"]
 auth-jwt = ["dep:jsonwebtoken", "dep:serde"]
+cache = ["dep:serde"]
 
 [dependencies]
 async-trait = "0.1"

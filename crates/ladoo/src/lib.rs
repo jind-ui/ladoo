@@ -461,6 +461,8 @@
 
 pub mod app;
 pub mod auth;
+#[cfg(feature = "cache")]
+pub mod cache;
 pub mod config;
 pub mod context;
 pub mod cors;
