@@ -100,51 +100,69 @@ impl HealthRegistry {
 
     pub(crate) async fn run_checks(&self, timeout: Duration) -> Vec<CheckResult> {
         let mut set = tokio::task::JoinSet::new();
+        let mut names: HashMap<tokio::task::Id, String> = HashMap::new();
 
         for check in &self.checks {
             let check = check.clone();
-            set.spawn(async move {
-                let start = std::time::Instant::now();
-                let result = tokio::time::timeout(timeout, check.check()).await;
-                let latency = start.elapsed();
-                CheckResult {
-                    name: check.name().to_string(),
-                    ok: matches!(result, Ok(Ok(()))),
-                    error: match result {
-                        Ok(Ok(())) => None,
-                        Ok(Err(e)) => Some(e.to_string()),
-                        Err(_) => Some("check timed out".to_string()),
-                    },
-                    latency,
-                }
-            });
+            let name = check.name().to_string();
+            let fut = async move { check.check().await };
+            let abort = set.spawn(run_one(name.clone(), fut, timeout));
+            names.insert(abort.id(), name);
         }
 
         for closure in &self.closures {
             let name = closure.name.clone();
             let check_fn = closure.check.clone();
-            set.spawn(async move {
-                let start = std::time::Instant::now();
-                let result = tokio::time::timeout(timeout, check_fn()).await;
-                let latency = start.elapsed();
-                CheckResult {
-                    name,
-                    ok: matches!(result, Ok(Ok(()))),
-                    error: match result {
-                        Ok(Ok(())) => None,
-                        Ok(Err(e)) => Some(e.to_string()),
-                        Err(_) => Some("check timed out".to_string()),
-                    },
-                    latency,
-                }
-            });
+            let fut = async move { check_fn().await };
+            let abort = set.spawn(run_one(name.clone(), fut, timeout));
+            names.insert(abort.id(), name);
         }
 
         let mut results = Vec::new();
-        while let Some(Ok(result)) = set.join_next().await {
-            results.push(result);
+        while let Some(joined) = set.join_next_with_id().await {
+            match joined {
+                Ok((_, result)) => results.push(result),
+                Err(join_err) => {
+                    let name = names
+                        .get(&join_err.id())
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".to_string());
+                    results.push(CheckResult {
+                        name,
+                        ok: false,
+                        error: Some("check panicked".to_string()),
+                        latency: Duration::ZERO,
+                    });
+                }
+            }
         }
         results
+    }
+}
+
+/// Run a single health check with a timeout, producing a [`CheckResult`]
+/// regardless of whether the check succeeds, fails, or times out.
+///
+/// Shared by both [`HealthCheckable`] checks and manual [`HealthClosure`]
+/// checks in [`HealthRegistry::run_checks`] — the only difference between
+/// the two is how the name and future are obtained.
+async fn run_one(
+    name: String,
+    fut: impl Future<Output = crate::error::Result<()>> + Send,
+    timeout: Duration,
+) -> CheckResult {
+    let start = std::time::Instant::now();
+    let result = tokio::time::timeout(timeout, fut).await;
+    let latency = start.elapsed();
+    CheckResult {
+        name,
+        ok: matches!(result, Ok(Ok(()))),
+        error: match result {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => Some(e.to_string()),
+            Err(_) => Some("check timed out".to_string()),
+        },
+        latency,
     }
 }
 
@@ -401,6 +419,42 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert!(!results[0].ok);
         assert_eq!(results[0].error.as_deref(), Some("check timed out"));
+    }
+
+    #[tokio::test]
+    async fn registry_panicking_check_reports_others_correctly() {
+        struct PanickingCheck;
+        #[async_trait]
+        impl HealthCheckable for PanickingCheck {
+            fn name(&self) -> &str {
+                "panicky"
+            }
+            async fn check(&self) -> crate::error::Result<()> {
+                panic!("boom");
+            }
+        }
+        let mut registry = HealthRegistry::new();
+        registry.checks.push(Arc::new(AlwaysHealthy));
+        registry.checks.push(Arc::new(PanickingCheck));
+        let results = registry.run_checks(Duration::from_secs(5)).await;
+
+        // Both results must be present — a panic in one check must not
+        // silently truncate the others.
+        assert_eq!(results.len(), 2);
+
+        let healthy = results
+            .iter()
+            .find(|r| r.name == "always-healthy")
+            .expect("healthy check result missing");
+        assert!(healthy.ok);
+        assert!(healthy.error.is_none());
+
+        let panicked = results
+            .iter()
+            .find(|r| r.name == "panicky")
+            .expect("panicked check result missing");
+        assert!(!panicked.ok);
+        assert_eq!(panicked.error.as_deref(), Some("check panicked"));
     }
 
     #[tokio::test]
