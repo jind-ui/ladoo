@@ -467,6 +467,7 @@ pub mod cors;
 pub mod error;
 pub mod extract;
 pub mod handler;
+pub mod health;
 #[cfg(feature = "logging")]
 pub mod logging;
 pub mod middleware;

@@ -54,6 +54,8 @@ pub struct App {
     shutdown_timeout: std::time::Duration,
     shutdown_hooks: Vec<ShutdownHook>,
     plugin_names: Vec<String>,
+    health_registry: crate::health::HealthRegistry,
+    health_config: crate::health::HealthConfig,
 }
 
 impl App {
@@ -68,6 +70,8 @@ impl App {
             shutdown_timeout: std::time::Duration::from_secs(30),
             shutdown_hooks: Vec::new(),
             plugin_names: Vec::new(),
+            health_registry: crate::health::HealthRegistry::new(),
+            health_config: crate::health::HealthConfig::new(),
         }
     }
 
@@ -179,6 +183,90 @@ impl App {
     #[cfg(feature = "json")]
     pub fn pagination(self, config: crate::pagination::PaginationConfig) -> Self {
         self.provide(config)
+    }
+
+    /// Provide state that also registers a health check.
+    ///
+    /// The value is stored in application state (available via
+    /// [`State<T>`](crate::state::State)) AND registered with the health
+    /// endpoint. A clone of the value is used for health checking.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ladoo::prelude::*;
+    ///
+    /// #[async_trait]
+    /// impl HealthCheckable for Database {
+    ///     fn name(&self) -> &str { "postgres" }
+    ///     async fn check(&self) -> Result<()> { self.ping().await }
+    /// }
+    ///
+    /// App::new()
+    ///     .provide_healthy(Database::connect(url).await?)
+    ///     .get("/users", list_users);
+    /// ```
+    pub fn provide_healthy<T>(mut self, value: T) -> Self
+    where
+        T: crate::health::HealthCheckable + Clone + Send + Sync + 'static,
+    {
+        let health_clone = value.clone();
+        self.state.insert(value);
+        self.health_registry
+            .checks
+            .push(std::sync::Arc::new(health_clone));
+        self
+    }
+
+    /// Register a manual health check closure.
+    ///
+    /// Use for dependencies that don't implement [`HealthCheckable`](crate::health::HealthCheckable) —
+    /// third-party types, external APIs, or ad-hoc checks.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// App::new()
+    ///     .health("external-api", || async {
+    ///         reqwest::get("https://api.example.com/ping").await?;
+    ///         Ok(())
+    ///     })
+    /// ```
+    pub fn health<F, Fut>(mut self, name: &str, check: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = crate::error::Result<()>> + Send + 'static,
+    {
+        self.health_registry
+            .closures
+            .push(crate::health::HealthClosure {
+                name: name.to_string(),
+                check: std::sync::Arc::new(move || Box::pin(check())),
+            });
+        self
+    }
+
+    /// Configure the health endpoint.
+    ///
+    /// Controls the path, response format, metadata, and per-check timeout.
+    /// If not called, defaults apply: path `/health`, detailed responses,
+    /// no latency, 5-second check timeout.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ladoo::app::App;
+    /// use ladoo::health::HealthConfig;
+    ///
+    /// let _app = App::new()
+    ///     .health_config(HealthConfig::new()
+    ///         .path("/healthz")
+    ///         .detailed(false)
+    ///     );
+    /// ```
+    pub fn health_config(mut self, config: crate::health::HealthConfig) -> Self {
+        self.health_config = config;
+        self
     }
 
     /// Set the default log level (e.g., `"debug"`, `"info"`, `"warn"`).
@@ -488,7 +576,7 @@ impl App {
     /// Used internally by the server to access routes, dependency
     /// injection state, middleware, and shutdown configuration together.
     pub(crate) fn into_parts(
-        self,
+        mut self,
     ) -> (
         Router,
         TypeMap,
@@ -496,6 +584,20 @@ impl App {
         std::time::Duration,
         Vec<ShutdownHook>,
     ) {
+        let registry = std::mem::take(&mut self.health_registry);
+        let config = std::mem::take(&mut self.health_config);
+
+        if registry.has_checks() {
+            let path = config.path.clone();
+            self.state.insert(Arc::new(registry));
+            self.state.insert(Arc::new(config));
+            self.router.add(
+                http::Method::GET,
+                &path,
+                crate::health::health_handler.into_handler(),
+            );
+        }
+
         (
             self.router,
             self.state,
@@ -1040,6 +1142,66 @@ mod tests {
             assert!(router.find(&Method::GET, "/before").is_some());
             assert!(router.find(&Method::GET, "/greet").is_some());
             assert!(router.find(&Method::GET, "/after").is_some());
+        }
+    }
+
+    mod health_tests {
+        use super::*;
+        use crate::health::{HealthCheckable, HealthConfig};
+
+        #[derive(Clone)]
+        struct MockDb;
+
+        #[async_trait::async_trait]
+        impl HealthCheckable for MockDb {
+            fn name(&self) -> &str {
+                "mock-db"
+            }
+            async fn check(&self) -> crate::error::Result<()> {
+                Ok(())
+            }
+        }
+
+        #[test]
+        fn provide_healthy_stores_state_and_registry() {
+            let app = App::new().provide_healthy(MockDb);
+            let (_, state, _, _, _) = app.into_parts();
+            assert!(state.get::<MockDb>().is_some());
+        }
+
+        #[test]
+        fn health_closure_registers_check() {
+            let app = App::new().health("test", || async { Ok(()) });
+            // Verify by checking that into_parts produces a route
+            let (router, _, _, _, _) = app.into_parts();
+            assert!(router.find(&Method::GET, "/health").is_some());
+        }
+
+        #[test]
+        fn health_config_sets_custom_path() {
+            let app = App::new()
+                .health("test", || async { Ok(()) })
+                .health_config(HealthConfig::new().path("/healthz"));
+            let (router, _, _, _, _) = app.into_parts();
+            assert!(router.find(&Method::GET, "/healthz").is_some());
+            assert!(router.find(&Method::GET, "/health").is_none());
+        }
+
+        #[test]
+        fn no_health_checks_no_route() {
+            let app = App::new();
+            let (router, _, _, _, _) = app.into_parts();
+            assert!(router.find(&Method::GET, "/health").is_none());
+        }
+
+        #[tokio::test]
+        async fn health_endpoint_via_client() {
+            let client = App::test().provide_healthy(MockDb).into_client();
+            let resp = client.get("/health").send().await;
+            assert_eq!(resp.status(), 200);
+            let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
+            assert_eq!(body["status"], "healthy");
+            assert_eq!(body["checks"]["mock-db"]["status"], "up");
         }
     }
 

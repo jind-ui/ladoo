@@ -26,6 +26,7 @@ pub use crate::error::{Error, Result};
 pub use crate::extract::FromRequest;
 pub use crate::response::{Html, IntoResponse, Response};
 pub use crate::handler::IntoHandler;
+pub use crate::health::HealthCheckable;
 #[cfg(feature = "json")]
 pub use crate::extract::Json;
 pub use crate::middleware::{Middleware, Next};

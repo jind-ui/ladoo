@@ -10,7 +10,7 @@ categories = ["web-programming::http-server"]
 
 [features]
 default = ["json", "macros", "config", "logging"]
-json = ["dep:serde", "dep:serde_json", "dep:serde_urlencoded"]
+json = ["dep:serde", "dep:serde_urlencoded"]
 logging = ["dep:tracing", "dep:tracing-subscriber", "dep:uuid"]
 macros = ["dep:ladoo-macros"]
 test-server = ["dep:reqwest"]
@@ -29,7 +29,7 @@ hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1"] }
 jsonwebtoken = { version = "9", optional = true }
 ladoo-macros = { path = "../ladoo-macros", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
+serde_json = "1"
 serde_urlencoded = { version = "0.7", optional = true }
 reqwest = { version = "0.12", features = ["json"], optional = true }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net"] }
@@ -43,7 +43,6 @@ validator = { version = "0.19", features = ["derive"], optional = true }
 jsonwebtoken = "9"
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "time"] }
 validator = { version = "0.19", features = ["derive"] }
