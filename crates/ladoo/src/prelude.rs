@@ -27,6 +27,8 @@ pub use crate::extract::FromRequest;
 pub use crate::response::{Html, IntoResponse, Response};
 pub use crate::handler::IntoHandler;
 pub use crate::health::{HealthCheckable, HealthConfig};
+#[cfg(feature = "cache")]
+pub use crate::cache::{Cache, CacheStore};
 #[cfg(feature = "json")]
 pub use crate::extract::Json;
 #[cfg(feature = "json")]
