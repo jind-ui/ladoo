@@ -155,6 +155,32 @@ impl App {
         self.provide(config)
     }
 
+    /// Set pagination defaults and limits.
+    ///
+    /// The provided [`PaginationConfig`](crate::pagination::PaginationConfig) is
+    /// stored as application state. [`Paginate`](crate::pagination::Paginate) and
+    /// [`CursorParams`](crate::pagination::CursorParams) extractors read it
+    /// automatically to apply default and maximum page sizes.
+    ///
+    /// If not called, hardcoded defaults apply (20 per page, 100 max).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ladoo::app::App;
+    /// use ladoo::pagination::PaginationConfig;
+    ///
+    /// let _app = App::new()
+    ///     .pagination(PaginationConfig::new()
+    ///         .default_per_page(25)
+    ///         .max_per_page(50)
+    ///     );
+    /// ```
+    #[cfg(feature = "json")]
+    pub fn pagination(self, config: crate::pagination::PaginationConfig) -> Self {
+        self.provide(config)
+    }
+
     /// Set the default log level (e.g., `"debug"`, `"info"`, `"warn"`).
     ///
     /// Lowest precedence — overridden by `RUST_LOG` or
@@ -774,6 +800,20 @@ mod tests {
         let (router, state, _middleware, _shutdown_timeout, _shutdown_hooks) = app.into_parts();
         assert!(router.find(&Method::GET, "/").is_some());
         assert_eq!(state.get::<u32>(), Some(&42));
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    fn pagination_stores_config() {
+        let app = App::new().pagination(
+            crate::pagination::PaginationConfig::new()
+                .default_per_page(25)
+                .max_per_page(50),
+        );
+        let (_, state, _, _, _) = app.into_parts();
+        let config = state.get::<crate::pagination::PaginationConfig>().unwrap();
+        assert_eq!(config.default_per_page, 25);
+        assert_eq!(config.max_per_page, 50);
     }
 
     #[test]

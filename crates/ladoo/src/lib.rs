@@ -470,6 +470,8 @@ pub mod handler;
 #[cfg(feature = "logging")]
 pub mod logging;
 pub mod middleware;
+#[cfg(feature = "json")]
+pub mod pagination;
 pub mod plugin;
 pub mod prelude;
 pub mod rate_limit;
