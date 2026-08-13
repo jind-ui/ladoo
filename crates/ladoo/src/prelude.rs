@@ -26,9 +26,13 @@ pub use crate::error::{Error, Result};
 pub use crate::extract::FromRequest;
 pub use crate::response::{Html, IntoResponse, Response};
 pub use crate::handler::IntoHandler;
-pub use crate::health::HealthCheckable;
+pub use crate::health::{HealthCheckable, HealthConfig};
 #[cfg(feature = "json")]
 pub use crate::extract::Json;
+#[cfg(feature = "json")]
+pub use crate::pagination::{
+    CursorMeta, CursorPage, CursorParams, Page, PageMeta, Paginate, PaginationConfig,
+};
 pub use crate::middleware::{Middleware, Next};
 pub use crate::plugin::Plugin;
 pub use crate::rate_limit::{MemoryStore, RateKey, RateLimit, RateStore};

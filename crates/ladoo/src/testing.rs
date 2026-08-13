@@ -223,6 +223,11 @@ impl TestResponse {
         &self.headers
     }
 
+    /// Returns the `Content-Type` header value, if present.
+    pub fn content_type(&self) -> Option<&str> {
+        self.header("content-type")
+    }
+
     /// Returns the response body as a UTF-8 string.
     ///
     /// # Panics
