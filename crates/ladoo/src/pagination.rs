@@ -37,8 +37,11 @@ impl PaginationConfig {
     }
 
     /// Set the maximum allowed items per page.
+    ///
+    /// Clamped to a minimum of 1 — a max of 0 would make `per_page`
+    /// unsatisfiable and panic downstream in `u64::clamp(1, max)`.
     pub fn max_per_page(mut self, n: u64) -> Self {
-        self.max_per_page = n;
+        self.max_per_page = n.max(1);
         self
     }
 }
@@ -85,8 +88,12 @@ pub struct Paginate {
 
 impl Paginate {
     /// SQL OFFSET value: `(page - 1) * per_page`.
+    ///
+    /// Uses saturating arithmetic throughout — `page` is parsed from
+    /// untrusted query input with only a lower bound enforced (`max(1)`),
+    /// so a very large `page` (e.g. `u64::MAX`) must not panic here.
     pub fn offset(&self) -> u64 {
-        self.page.saturating_sub(1) * self.per_page
+        self.page.saturating_sub(1).saturating_mul(self.per_page)
     }
 
     /// SQL LIMIT value (same as `per_page`).
@@ -167,9 +174,12 @@ impl FromRequest for Paginate {
                 .into_response()
         })?;
 
+        // `.max(1)` guards against `PaginationConfig { max_per_page: 0, .. }`
+        // constructed directly (its fields are public, bypassing the
+        // builder's own clamp) — `u64::clamp(1, max)` panics if `max < 1`.
         let (default_per_page, max_per_page) =
             if let Some(config) = req.extensions().get::<PaginationConfig>() {
-                (config.default_per_page, config.max_per_page)
+                (config.default_per_page, config.max_per_page.max(1))
             } else {
                 (DEFAULT_PER_PAGE, DEFAULT_MAX_PER_PAGE)
             };
@@ -293,9 +303,11 @@ impl FromRequest for CursorParams {
                 .into_response());
         }
 
+        // See the matching comment in `Paginate::from_request` — `.max(1)`
+        // prevents a panic in `u64::clamp` if `max_per_page` is 0.
         let (default_per_page, max_per_page) =
             if let Some(config) = req.extensions().get::<PaginationConfig>() {
-                (config.default_per_page, config.max_per_page)
+                (config.default_per_page, config.max_per_page.max(1))
             } else {
                 (DEFAULT_PER_PAGE, DEFAULT_MAX_PER_PAGE)
             };
@@ -331,6 +343,12 @@ mod tests {
     }
 
     #[test]
+    fn pagination_config_max_per_page_zero_clamps_to_one() {
+        let config = PaginationConfig::new().max_per_page(0);
+        assert_eq!(config.max_per_page, 1);
+    }
+
+    #[test]
     fn paginate_offset_page_one() {
         let p = Paginate { page: 1, per_page: 20 };
         assert_eq!(p.offset(), 0);
@@ -348,6 +366,21 @@ mod tests {
     fn paginate_offset_page_zero_saturates() {
         let p = Paginate { page: 0, per_page: 10 };
         assert_eq!(p.offset(), 0);
+    }
+
+    #[test]
+    fn paginate_offset_max_page_does_not_overflow() {
+        let p = Paginate { page: u64::MAX, per_page: 20 };
+        assert_eq!(p.offset(), u64::MAX);
+    }
+
+    #[test]
+    fn paginate_respond_zero_per_page_does_not_divide_by_zero() {
+        let p = Paginate { page: 1, per_page: 0 };
+        let page: Page<u32> = p.respond(vec![1, 2, 3], 10);
+        assert_eq!(page.meta.total_pages, 0);
+        assert_eq!(page.meta.per_page, 0);
+        assert_eq!(page.data.len(), 3);
     }
 
     #[test]
@@ -452,6 +485,29 @@ mod tests {
     }
 
     #[test]
+    fn paginate_config_with_zero_max_per_page_does_not_panic() {
+        let mut req = crate::request::Request::test(Method::GET, "/users?per_page=5");
+        // Bypass the builder's own clamp by constructing the struct
+        // directly (its fields are public) to exercise the extractor's
+        // defensive `.max(1)`.
+        req.provide_test_state(PaginationConfig {
+            default_per_page: DEFAULT_PER_PAGE,
+            max_per_page: 0,
+        });
+        let p = Paginate::from_request(&mut req).unwrap();
+        assert_eq!(p.per_page, 1);
+    }
+
+    #[test]
+    fn paginate_invalid_query_returns_400() {
+        let mut req = crate::request::Request::test(Method::GET, "/users?page=abc");
+        let result = Paginate::from_request(&mut req);
+        assert!(result.is_err());
+        let resp = result.unwrap_err();
+        assert_eq!(resp.status(), http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
     fn cursor_extracts_after() {
         let mut req = crate::request::Request::test(Method::GET, "/posts?after=abc&limit=10");
         let c = CursorParams::from_request(&mut req).unwrap();
@@ -500,6 +556,29 @@ mod tests {
         req.provide_test_state(PaginationConfig::new().max_per_page(50));
         let c = CursorParams::from_request(&mut req).unwrap();
         assert_eq!(c.limit, 50);
+    }
+
+    #[test]
+    fn cursor_config_with_zero_max_per_page_does_not_panic() {
+        let mut req = crate::request::Request::test(Method::GET, "/posts?limit=5");
+        // Bypass the builder's own clamp by constructing the struct
+        // directly (its fields are public) to exercise the extractor's
+        // defensive `.max(1)`.
+        req.provide_test_state(PaginationConfig {
+            default_per_page: DEFAULT_PER_PAGE,
+            max_per_page: 0,
+        });
+        let c = CursorParams::from_request(&mut req).unwrap();
+        assert_eq!(c.limit, 1);
+    }
+
+    #[test]
+    fn cursor_invalid_query_returns_400() {
+        let mut req = crate::request::Request::test(Method::GET, "/posts?limit=abc");
+        let result = CursorParams::from_request(&mut req);
+        assert!(result.is_err());
+        let resp = result.unwrap_err();
+        assert_eq!(resp.status(), http::StatusCode::BAD_REQUEST);
     }
 
     use crate::response::IntoResponse;
