@@ -500,3 +500,9 @@ pub use ladoo_macros::AppError;
 /// See [`ladoo_macros::Config`] for the attribute syntax.
 #[cfg(all(feature = "macros", feature = "config"))]
 pub use ladoo_macros::Config;
+
+/// Derive `Job` for background job structs.
+///
+/// See [`ladoo_macros::Job`] for the attribute syntax.
+#[cfg(all(feature = "macros", feature = "jobs"))]
+pub use ladoo_macros::Job;

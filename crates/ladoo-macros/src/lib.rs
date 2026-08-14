@@ -7,6 +7,7 @@
 
 mod app_error;
 mod config;
+mod job;
 
 /// Derive `Display` and `IntoResponse` for error enums.
 ///
@@ -65,4 +66,36 @@ pub fn derive_app_error(input: proc_macro::TokenStream) -> proc_macro::TokenStre
 #[proc_macro_derive(Config, attributes(config))]
 pub fn derive_config(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     config::derive(input.into()).into()
+}
+
+/// Derive `Job` for background job structs.
+///
+/// Generates `name()` (from struct name, snake_cased) and `config()`
+/// (from `#[job(...)]` attributes). The user writes `handle()` as an
+/// inherent method; the macro delegates to it.
+///
+/// # Attributes
+///
+/// - `retries = N` — max retries (default: 0)
+/// - `timeout = "duration"` — `"30s"`, `"5m"`, `"1h"` (default: `"30s"`)
+/// - `backoff = "strategy"` — `"fixed"` or `"exponential"` (default: `"exponential"`)
+///
+/// # Examples
+///
+/// ```ignore
+/// use ladoo::prelude::*;
+///
+/// #[derive(Job)]
+/// #[job(retries = 3, timeout = "5m")]
+/// struct SendEmail { user_id: i64 }
+///
+/// impl SendEmail {
+///     async fn handle(&self, ctx: &JobContext) -> Result<(), JobError> {
+///         Ok(())
+///     }
+/// }
+/// ```
+#[proc_macro_derive(Job, attributes(job))]
+pub fn derive_job(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    job::derive(input.into()).into()
 }
