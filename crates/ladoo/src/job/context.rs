@@ -38,3 +38,52 @@ impl JobContext {
         self.job_name
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_returns_provided_type() {
+        let mut map = TypeMap::new();
+        map.insert(42_u32);
+        let ctx = JobContext {
+            state: Arc::new(map),
+            attempt: 1,
+            job_name: "test_job",
+        };
+        assert_eq!(*ctx.state::<u32>().unwrap(), 42);
+    }
+
+    #[test]
+    fn state_returns_error_for_missing_type() {
+        let ctx = JobContext {
+            state: Arc::new(TypeMap::new()),
+            attempt: 1,
+            job_name: "test_job",
+        };
+        let err = ctx.state::<u32>().unwrap_err();
+        assert!(matches!(err, JobError::MissingState(_)));
+        assert!(err.to_string().contains("u32"));
+    }
+
+    #[test]
+    fn attempt_returns_current_attempt() {
+        let ctx = JobContext {
+            state: Arc::new(TypeMap::new()),
+            attempt: 3,
+            job_name: "test_job",
+        };
+        assert_eq!(ctx.attempt(), 3);
+    }
+
+    #[test]
+    fn job_name_returns_name() {
+        let ctx = JobContext {
+            state: Arc::new(TypeMap::new()),
+            attempt: 1,
+            job_name: "send_email",
+        };
+        assert_eq!(ctx.job_name(), "send_email");
+    }
+}

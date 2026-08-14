@@ -544,7 +544,7 @@ impl App {
     pub fn into_client(self) -> crate::testing::TestClient {
         let (router, state, middleware, _shutdown_timeout, _shutdown_hooks, _body_limit) =
             self.into_parts();
-        crate::testing::TestClient::new(router, state, middleware)
+        crate::testing::TestClient::new(router, build_and_initialize_state(state), middleware)
     }
 
     /// Start a real TCP server on a random port for integration testing.
@@ -581,7 +581,7 @@ impl App {
             self.into_parts();
         crate::testing::TestServer::start(
             router,
-            state,
+            build_and_initialize_state(state),
             middleware,
             shutdown_timeout,
             shutdown_hooks,
@@ -698,7 +698,7 @@ impl App {
             crate::server::serve(
                 router,
                 listener,
-                std::sync::Arc::new(state),
+                build_and_initialize_state(state),
                 middleware,
                 crate::shutdown::shutdown_signal(),
                 shutdown_timeout,
@@ -753,7 +753,7 @@ impl App {
         crate::server::serve(
             router,
             listener,
-            std::sync::Arc::new(state),
+            build_and_initialize_state(state),
             middleware,
             crate::shutdown::shutdown_signal(),
             shutdown_timeout,
@@ -792,6 +792,34 @@ impl Default for App {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Wrap the final `TypeMap` in an `Arc` and initialize the [`JobRunner`](crate::job::JobRunner),
+/// if one was provided via [`App::provide`].
+///
+/// `into_parts()` returns state as an owned `TypeMap` because plugins and
+/// health-check registration still need to mutate it. The `JobRunner`
+/// needs a *shared* reference to the finalized state (so jobs can access
+/// `State<T>` the same way handlers do) — that reference can only exist
+/// once the map is behind an `Arc`. This function is the single point
+/// where that happens, called by every path that turns app state into a
+/// running server or test client.
+#[cfg(feature = "jobs")]
+pub(crate) fn build_and_initialize_state(state: TypeMap) -> Arc<TypeMap> {
+    let state = Arc::new(state);
+    if let Some(runner) = state.get::<crate::job::JobRunner>() {
+        runner.initialize(state.clone());
+    }
+    state
+}
+
+/// Wrap the final `TypeMap` in an `Arc`.
+///
+/// Mirrors the `jobs`-enabled version above so call sites don't need to
+/// branch on the feature flag.
+#[cfg(not(feature = "jobs"))]
+pub(crate) fn build_and_initialize_state(state: TypeMap) -> Arc<TypeMap> {
+    Arc::new(state)
 }
 
 #[cfg(test)]

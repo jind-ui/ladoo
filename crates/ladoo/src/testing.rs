@@ -43,14 +43,18 @@ pub struct TestClient {
 
 impl TestClient {
     /// Create a test client from app parts.
+    ///
+    /// `state` must already be finalized via
+    /// [`build_and_initialize_state`](crate::app::build_and_initialize_state)
+    /// so that any `JobRunner` in state has been wired up before tests run.
     pub(crate) fn new(
         router: Router,
-        state: TypeMap,
+        state: Arc<TypeMap>,
         global_middleware: Vec<Arc<dyn Middleware>>,
     ) -> Self {
         Self {
             router: Arc::new(router),
-            state: Arc::new(state),
+            state,
             global_middleware: global_middleware.into(),
         }
     }
@@ -271,10 +275,15 @@ pub struct TestServer {
 #[cfg(any(test, feature = "test-server"))]
 impl TestServer {
     /// Create and start a test server from app parts.
+    ///
+    /// `state` must already be finalized via
+    /// [`build_and_initialize_state`](crate::app::build_and_initialize_state)
+    /// so that any `JobRunner` in state has been wired up before the
+    /// server starts.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn start(
         router: Router,
-        state: TypeMap,
+        state: Arc<TypeMap>,
         global_middleware: Vec<Arc<dyn Middleware>>,
         shutdown_timeout: std::time::Duration,
         shutdown_hooks: Vec<ShutdownHook>,
@@ -290,7 +299,7 @@ impl TestServer {
             crate::server::serve(
                 router,
                 listener,
-                Arc::new(state),
+                state,
                 global_middleware,
                 std::future::pending::<()>(),
                 shutdown_timeout,
