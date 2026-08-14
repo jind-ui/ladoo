@@ -40,6 +40,8 @@ pub use crate::plugin::Plugin;
 pub use crate::rate_limit::{MemoryStore, RateKey, RateLimit, RateStore};
 #[cfg(feature = "json")]
 pub use crate::extract::Query;
+#[cfg(feature = "json")]
+pub use crate::extract::Path;
 pub use crate::extract::{Valid, Validate};
 pub use crate::auth::{Auth, AuthError, AuthProvider, HasRole};
 pub use crate::auth::providers::ApiKeyAuth;
