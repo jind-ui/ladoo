@@ -604,6 +604,15 @@ mod tests {
         assert_eq!(body["meta"]["dynamic"], "computed");
     }
 
+    // These three tests deliberately hold the env-var lock across an `.await`
+    // point: the point is to serialize the *entire* env-var-dependent
+    // request/response cycle against other tests in the process that touch
+    // `LADOO_ENV`/`APP_ENV`, not just the synchronous `set_var`/`remove_var`
+    // calls. The lock is a plain `std::sync::Mutex` (see
+    // `crate::error::tests::lock_env`) rather than an async-aware one because
+    // it only ever guards a few microseconds of test setup/teardown, never
+    // real request handling.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn handler_failed_check_shows_error() {
         let _guard = crate::error::tests::lock_env();
@@ -621,6 +630,7 @@ mod tests {
         std::env::remove_var("LADOO_ENV");
     }
 
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn health_redacts_errors_in_prod_mode() {
         let _guard = crate::error::tests::lock_env();
@@ -652,6 +662,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn health_shows_full_error_in_dev_mode() {
         let _guard = crate::error::tests::lock_env();
