@@ -470,6 +470,8 @@ pub mod error;
 pub mod extract;
 pub mod handler;
 pub mod health;
+#[cfg(feature = "jobs")]
+pub mod job;
 #[cfg(feature = "logging")]
 pub mod logging;
 pub mod middleware;
