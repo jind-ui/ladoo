@@ -240,6 +240,26 @@ mod tests {
         }
     }
 
+    struct AlwaysFailsJob {
+        counter: Arc<AtomicU32>,
+    }
+    impl Job for AlwaysFailsJob {
+        fn name(&self) -> &'static str {
+            "always_fails"
+        }
+        fn config(&self) -> JobConfig {
+            JobConfig {
+                max_retries: 2,
+                timeout: Duration::from_secs(5),
+                backoff: super::super::BackoffStrategy::Fixed(Duration::from_millis(1)),
+            }
+        }
+        async fn handle(&self, _ctx: &JobContext) -> Result<(), JobError> {
+            self.counter.fetch_add(1, Ordering::SeqCst);
+            Err(JobError::failed(std::io::Error::other("still failing")))
+        }
+    }
+
     struct SlowJob;
     impl Job for SlowJob {
         fn name(&self) -> &'static str {
@@ -289,6 +309,22 @@ mod tests {
             .wait()
             .await;
         assert!(result.is_ok());
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn retries_exhausted_returns_final_err() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let runner = initialized_runner();
+        let result = runner
+            .enqueue(AlwaysFailsJob {
+                counter: counter.clone(),
+            })
+            .wait()
+            .await;
+        assert!(result.is_err());
+        // max_retries: 2 → 3 total attempts (1 initial + 2 retries), all consumed
+        // before the loop gives up and returns the last attempt's error.
         assert_eq!(counter.load(Ordering::SeqCst), 3);
     }
 
