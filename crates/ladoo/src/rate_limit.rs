@@ -23,10 +23,11 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Weak};
+use std::time::Duration;
 
 use dashmap::DashMap;
+use tokio::time::Instant;
 
 use crate::context::Context;
 use crate::error::Result;
@@ -98,23 +99,70 @@ pub trait RateStore: Send + Sync + 'static {
     async fn reset(&self, key: &str);
 }
 
-/// In-memory rate limit store backed by a concurrent hash map.
+/// In-memory rate-limit store backed by [`DashMap`].
 ///
-/// Suitable for single-process applications. Expired entries are
-/// cleaned lazily on access — no background reaper thread.
+/// Expired entries are automatically evicted by a background task that sweeps
+/// every 60 seconds (configurable via [`with_reap_interval`](Self::with_reap_interval)).
+/// The reaper exits automatically when the `MemoryStore` is dropped.
 ///
 /// For distributed deployments, implement [`RateStore`] for a shared
 /// backend like Redis.
 pub struct MemoryStore {
-    entries: DashMap<String, (u64, Instant)>,
+    entries: Arc<DashMap<String, (u64, Instant)>>,
 }
 
 impl MemoryStore {
-    /// Create a new empty memory store.
+    /// Create a new rate-limit store with a background reaper
+    /// that sweeps expired entries every 60 seconds.
     pub fn new() -> Self {
-        Self {
-            entries: DashMap::new(),
-        }
+        Self::with_reap_interval(Duration::from_secs(60))
+    }
+
+    /// Create a new rate-limit store with a custom reap interval.
+    ///
+    /// The reaper runs as a background Tokio task and removes entries whose
+    /// expiry instant has passed. It exits automatically when the `MemoryStore`
+    /// is dropped.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ladoo::prelude::*;
+    /// use std::time::Duration;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let store = MemoryStore::with_reap_interval(Duration::from_secs(30));
+    /// # let _ = store;
+    /// # }
+    /// ```
+    pub fn with_reap_interval(interval: Duration) -> Self {
+        let entries = Arc::new(DashMap::new());
+        Self::spawn_reaper(Arc::downgrade(&entries), interval);
+        Self { entries }
+    }
+
+    fn spawn_reaper(weak: Weak<DashMap<String, (u64, Instant)>>, interval: Duration) {
+        // Capture the first deadline synchronously, at spawn time, rather than
+        // letting the first `sleep` call compute `now + interval` whenever the
+        // task happens to get its first poll. Under `tokio::time::pause`, the
+        // task may not be polled until after time has already been advanced,
+        // which would otherwise push the deadline further into the future than
+        // intended and make the reaper miss the eviction window entirely.
+        let mut deadline = Instant::now() + interval;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep_until(deadline).await;
+                match weak.upgrade() {
+                    Some(entries) => {
+                        let now = Instant::now();
+                        entries.retain(|_, (_, expires)| now < *expires);
+                        deadline = now + interval;
+                    }
+                    None => break,
+                }
+            }
+        });
     }
 }
 
@@ -459,6 +507,82 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn reaper_evicts_expired_entries() {
+        tokio::time::pause();
+
+        let store = MemoryStore::with_reap_interval(std::time::Duration::from_secs(1));
+
+        // Create an entry with a 2-second window
+        let result = store
+            .check_and_increment("test-key", 10, std::time::Duration::from_secs(2))
+            .await;
+        assert!(result.allowed);
+
+        // Verify entry exists
+        assert!(store.entries.contains_key("test-key"));
+
+        // Advance past the window expiry + reap interval
+        tokio::time::advance(std::time::Duration::from_secs(3)).await;
+
+        // Yield to let the reaper task run
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_millis(10)).await;
+        tokio::task::yield_now().await;
+
+        // Entry should have been reaped
+        assert!(
+            !store.entries.contains_key("test-key"),
+            "Expired entry should be evicted by reaper"
+        );
+    }
+
+    #[tokio::test]
+    async fn reaper_stops_when_store_is_dropped() {
+        tokio::time::pause();
+
+        let store = MemoryStore::with_reap_interval(std::time::Duration::from_secs(1));
+        let weak_entries = Arc::downgrade(&store.entries);
+
+        // Store is alive — weak reference should upgrade
+        assert!(weak_entries.upgrade().is_some());
+
+        // Drop the store
+        drop(store);
+
+        // Advance time past the reap interval so the reaper task runs
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+        tokio::task::yield_now().await;
+
+        // After the reaper runs, it should see the weak ref fail and exit
+        // The entries Arc should now be fully dropped
+        assert!(
+            weak_entries.upgrade().is_none(),
+            "Reaper should stop and release the Arc when store is dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn rate_limiting_works_with_arc_store() {
+        let store = MemoryStore::new();
+        let window = std::time::Duration::from_secs(60);
+
+        // First request — allowed
+        let r1 = store.check_and_increment("key", 2, window).await;
+        assert!(r1.allowed);
+        assert_eq!(r1.remaining, 1);
+
+        // Second request — allowed
+        let r2 = store.check_and_increment("key", 2, window).await;
+        assert!(r2.allowed);
+        assert_eq!(r2.remaining, 0);
+
+        // Third request — rejected
+        let r3 = store.check_and_increment("key", 2, window).await;
+        assert!(!r3.allowed);
+        assert_eq!(r3.remaining, 0);
+    }
+
+    #[tokio::test]
     async fn memory_store_allows_under_limit() {
         let store = MemoryStore::new();
         let result = store
@@ -533,8 +657,13 @@ mod tests {
         assert_eq!(result.remaining, 4);
     }
 
-    #[test]
-    fn rate_limit_builder_sets_limit_and_window() {
+    // `RateLimit::new()` constructs a `MemoryStore`, which now spawns a
+    // background reaper via `tokio::spawn` and reads the clock via
+    // `tokio::time::Instant::now()`. Both require an active Tokio runtime,
+    // so these builder-state tests need `#[tokio::test]` rather than plain
+    // `#[test]`.
+    #[tokio::test]
+    async fn rate_limit_builder_sets_limit_and_window() {
         let rl = RateLimit::new()
             .limit(100)
             .window(Duration::from_secs(900));
@@ -545,8 +674,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn rate_limit_default_key_is_ip() {
+    #[tokio::test]
+    async fn rate_limit_default_key_is_ip() {
         let rl = RateLimit::new();
         assert!(matches!(
             &rl.config,
@@ -557,8 +686,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn rate_limit_tier_switches_to_tiered_mode() {
+    #[tokio::test]
+    async fn rate_limit_tier_switches_to_tiered_mode() {
         let rl = RateLimit::new()
             .tier("free", 100, Duration::from_secs(3600))
             .tier("pro", 10_000, Duration::from_secs(3600));
