@@ -93,3 +93,29 @@ async fn derived_job_handle_delegates_to_inherent_method() {
     handle.wait().await.unwrap();
     assert_eq!(state.calls.load(Ordering::SeqCst), 1);
 }
+
+/// Regression test: `ladoo::prelude` re-exports a single-type-param `Result<T>`
+/// alias that shadows `std::result::Result<T, E>`. The `#[derive(Job)]` macro
+/// must fully qualify `::core::result::Result` (and `::ladoo::` paths) in its
+/// generated code so it still compiles when the caller has `use
+/// ladoo::prelude::*` in scope.
+mod prelude_compat {
+    use ladoo::prelude::*;
+
+    #[derive(Job)]
+    #[job(retries = 2)]
+    struct PreludeJob;
+
+    impl PreludeJob {
+        async fn handle(&self, _ctx: &JobContext) -> std::result::Result<(), JobError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn derive_compiles_with_prelude_glob_import() {
+        let job = PreludeJob;
+        assert_eq!(job.name(), "prelude_job");
+        assert_eq!(job.config().max_retries, 2);
+    }
+}

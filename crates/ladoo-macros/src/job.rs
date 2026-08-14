@@ -116,26 +116,26 @@ pub fn derive(input: TokenStream) -> TokenStream {
     }
 
     let backoff_tokens = if backoff_strategy == "fixed" {
-        quote! { ladoo::job::BackoffStrategy::Fixed(::std::time::Duration::from_secs(1)) }
+        quote! { ::ladoo::job::BackoffStrategy::Fixed(::std::time::Duration::from_secs(1)) }
     } else {
-        quote! { ladoo::job::BackoffStrategy::exponential_default() }
+        quote! { ::ladoo::job::BackoffStrategy::exponential_default() }
     };
 
     quote! {
-        impl ladoo::job::Job for #struct_name {
+        impl ::ladoo::job::Job for #struct_name {
             fn name(&self) -> &'static str {
                 #snake_name
             }
 
-            fn config(&self) -> ladoo::job::JobConfig {
-                ladoo::job::JobConfig {
+            fn config(&self) -> ::ladoo::job::JobConfig {
+                ::ladoo::job::JobConfig {
                     max_retries: #retries,
                     timeout: ::std::time::Duration::from_secs(#timeout_secs),
                     backoff: #backoff_tokens,
                 }
             }
 
-            fn handle(&self, ctx: &ladoo::job::JobContext) -> impl ::std::future::Future<Output = Result<(), ladoo::job::JobError>> + Send {
+            fn handle(&self, ctx: &::ladoo::job::JobContext) -> impl ::std::future::Future<Output = ::core::result::Result<(), ::ladoo::job::JobError>> + Send {
                 self.handle(ctx)
             }
         }
