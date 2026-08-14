@@ -19,6 +19,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use subtle::ConstantTimeEq;
 
 use crate::auth::{AuthError, AuthProvider};
 use crate::request::Request;
@@ -80,9 +81,14 @@ impl<U: Clone + Send + Sync + 'static> AuthProvider for ApiKeyAuth<U> {
             .get(&self.header_name)
             .and_then(|v| v.to_str().ok())
             .ok_or(AuthError::Missing)?;
+
+        let key_bytes = key.as_bytes();
         self.keys
-            .get(key)
-            .cloned()
+            .iter()
+            .find(|(k, _)| {
+                k.len() == key_bytes.len() && bool::from(k.as_bytes().ct_eq(key_bytes))
+            })
+            .map(|(_, user)| user.clone())
             .ok_or_else(|| AuthError::Invalid("Invalid API key".into()))
     }
 }
@@ -138,6 +144,19 @@ mod tests {
         let req = Request::test_with_headers(Method::GET, "/", headers);
         let result = auth.authenticate(&req).await;
         assert_eq!(result.unwrap(), User { name: "Bob".into() });
+    }
+
+    #[tokio::test]
+    async fn api_key_rejects_invalid_key_with_generic_message() {
+        let auth = ApiKeyAuth::new().key("key-abc-123", User { name: "Alice".into() });
+        let mut headers = http::HeaderMap::new();
+        headers.insert("X-API-Key", http::HeaderValue::from_static("wrong-key"));
+        let req = Request::test_with_headers(Method::GET, "/", headers);
+        let result = auth.authenticate(&req).await;
+        match result.unwrap_err() {
+            AuthError::Invalid(msg) => assert_eq!(msg, "Invalid API key"),
+            other => panic!("Expected AuthError::Invalid, got: {:?}", other),
+        }
     }
 
     #[tokio::test]
