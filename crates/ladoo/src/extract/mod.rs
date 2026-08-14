@@ -73,6 +73,12 @@ mod json;
 #[cfg(feature = "json")]
 pub use json::Json;
 
+#[cfg(feature = "json")]
+mod path;
+
+#[cfg(feature = "json")]
+pub use path::Path;
+
 mod valid;
 
 pub use valid::{Valid, Validate, ValidationErrors};
