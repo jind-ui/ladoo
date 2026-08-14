@@ -56,9 +56,13 @@ pub struct JwtAuth<C: DeserializeOwned + Clone + Send + Sync + 'static> {
 
 impl<C: DeserializeOwned + Clone + Send + Sync + 'static> JwtAuth<C> {
     /// Create a JWT authenticator using HMAC-SHA256.
+    ///
+    /// Tokens must include an `exp` (expiration) claim by default — tokens
+    /// without one are rejected. Call [`allow_no_expiry`](Self::allow_no_expiry)
+    /// to opt out.
     pub fn hs256(secret: &[u8]) -> Self {
         let mut validation = Validation::new(Algorithm::HS256);
-        validation.set_required_spec_claims::<String>(&[]);
+        validation.set_required_spec_claims(&["exp"]);
         Self {
             decoding_key: DecodingKey::from_secret(secret),
             validation,
@@ -67,9 +71,13 @@ impl<C: DeserializeOwned + Clone + Send + Sync + 'static> JwtAuth<C> {
     }
 
     /// Create a JWT authenticator using RSA-SHA256 from a PEM-encoded public key.
+    ///
+    /// Tokens must include an `exp` (expiration) claim by default — tokens
+    /// without one are rejected. Call [`allow_no_expiry`](Self::allow_no_expiry)
+    /// to opt out.
     pub fn rs256(pem: &[u8]) -> Self {
         let mut validation = Validation::new(Algorithm::RS256);
-        validation.set_required_spec_claims::<String>(&[]);
+        validation.set_required_spec_claims(&["exp"]);
         Self {
             decoding_key: DecodingKey::from_rsa_pem(pem)
                 .expect("invalid RSA PEM key"),
@@ -97,6 +105,28 @@ impl<C: DeserializeOwned + Clone + Send + Sync + 'static> JwtAuth<C> {
         self.validation.required_spec_claims.insert("aud".to_string());
         self
     }
+
+    /// Allow tokens without an `exp` claim.
+    ///
+    /// By default, `JwtAuth` requires tokens to include an `exp` (expiration)
+    /// claim. Call this method to accept tokens that never expire — useful for
+    /// testing or internal-only tokens where expiry is managed externally.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ladoo::prelude::*;
+    ///
+    /// # #[derive(Clone, serde::Deserialize)]
+    /// # struct Claims { sub: String }
+    /// let auth = JwtAuth::<Claims>::hs256(b"secret")
+    ///     .allow_no_expiry();
+    /// ```
+    pub fn allow_no_expiry(mut self) -> Self {
+        self.validation.required_spec_claims.remove("exp");
+        self.validation.validate_exp = false;
+        self
+    }
 }
 
 #[async_trait]
@@ -115,14 +145,16 @@ impl<C: DeserializeOwned + Clone + Send + Sync + 'static> AuthProvider for JwtAu
             .ok_or_else(|| AuthError::Invalid("Expected 'Bearer <token>' format".into()))?;
 
         let token_data =
-            jsonwebtoken::decode::<C>(token, &self.decoding_key, &self.validation)
-                .map_err(|e| {
-                    use jsonwebtoken::errors::ErrorKind;
+            jsonwebtoken::decode::<C>(token, &self.decoding_key, &self.validation).map_err(
+                |e| {
+                    #[cfg(feature = "logging")]
+                    tracing::debug!(error = %e, "JWT validation failed");
                     match e.kind() {
-                        ErrorKind::ExpiredSignature => AuthError::Expired,
-                        _ => AuthError::Invalid(e.to_string()),
+                        jsonwebtoken::errors::ErrorKind::ExpiredSignature => AuthError::Expired,
+                        _ => AuthError::Invalid("Invalid token".into()),
                     }
-                })?;
+                },
+            )?;
 
         Ok(token_data.claims)
     }
@@ -137,6 +169,15 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     struct TestClaims {
         sub: String,
+        exp: u64,
+    }
+
+    fn future_exp() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600
     }
 
     fn make_hs256_token(claims: &TestClaims, secret: &[u8]) -> String {
@@ -170,6 +211,7 @@ mod tests {
         sub: String,
         iss: String,
         aud: String,
+        exp: u64,
     }
 
     fn make_token_with_iss_aud(claims: &ClaimsWithIssAud, secret: &[u8]) -> String {
@@ -180,7 +222,10 @@ mod tests {
     #[tokio::test]
     async fn valid_token_returns_claims() {
         let secret = b"test-secret-key-256-bits-long!!";
-        let claims = TestClaims { sub: "alice".into() };
+        let claims = TestClaims {
+            sub: "alice".into(),
+            exp: future_exp(),
+        };
         let token = make_hs256_token(&claims, secret);
 
         let jwt = JwtAuth::<TestClaims>::hs256(secret);
@@ -246,7 +291,10 @@ mod tests {
 
     #[tokio::test]
     async fn wrong_secret_returns_invalid() {
-        let claims = TestClaims { sub: "alice".into() };
+        let claims = TestClaims {
+            sub: "alice".into(),
+            exp: future_exp(),
+        };
         let token = make_hs256_token(&claims, b"correct-secret-key-long-enough!");
         let jwt = JwtAuth::<TestClaims>::hs256(b"wrong-secret-key!!-long-enough!");
         let mut headers = http::HeaderMap::new();
@@ -263,7 +311,10 @@ mod tests {
     async fn with_issuer_validation() {
         let secret = b"test-secret-key-256-bits-long!!";
         // Token without iss claim should fail when issuer is required
-        let claims = TestClaims { sub: "alice".into() };
+        let claims = TestClaims {
+            sub: "alice".into(),
+            exp: future_exp(),
+        };
         let token = make_hs256_token(&claims, secret);
 
         let jwt = JwtAuth::<TestClaims>::hs256(secret).with_issuer("my-app");
@@ -281,7 +332,10 @@ mod tests {
     async fn with_audience_validation() {
         let secret = b"test-secret-key-256-bits-long!!";
         // Token without aud claim should fail when audience is required
-        let claims = TestClaims { sub: "alice".into() };
+        let claims = TestClaims {
+            sub: "alice".into(),
+            exp: future_exp(),
+        };
         let token = make_hs256_token(&claims, secret);
 
         let jwt = JwtAuth::<TestClaims>::hs256(secret).with_audience("my-api");
@@ -302,6 +356,7 @@ mod tests {
             sub: "alice".into(),
             iss: "my-app".into(),
             aud: "my-api".into(),
+            exp: future_exp(),
         };
         let token = make_token_with_iss_aud(&claims, secret);
 
@@ -371,7 +426,10 @@ xQIDAQAB
 
     #[tokio::test]
     async fn rs256_valid_token_returns_claims() {
-        let claims = TestClaims { sub: "alice".into() };
+        let claims = TestClaims {
+            sub: "alice".into(),
+            exp: future_exp(),
+        };
         let token = make_rs256_token(&claims);
 
         let jwt = JwtAuth::<TestClaims>::rs256(TEST_RSA_PUBLIC_PEM);
@@ -387,7 +445,10 @@ xQIDAQAB
 
     #[tokio::test]
     async fn rs256_wrong_key_returns_invalid() {
-        let claims = TestClaims { sub: "alice".into() };
+        let claims = TestClaims {
+            sub: "alice".into(),
+            exp: future_exp(),
+        };
         let token = make_hs256_token(&claims, b"test-secret-key-256-bits-long!!");
 
         let jwt = JwtAuth::<TestClaims>::rs256(TEST_RSA_PUBLIC_PEM);
@@ -399,5 +460,110 @@ xQIDAQAB
         let req = Request::test_with_headers(Method::GET, "/", headers);
         let result = jwt.authenticate(&req).await;
         assert!(matches!(result.unwrap_err(), AuthError::Invalid(_)));
+    }
+
+    #[tokio::test]
+    async fn rejects_token_without_exp_by_default() {
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        struct Claims {
+            sub: String,
+        }
+
+        let secret = b"test-secret-key-for-jwt-testing!";
+        let auth = JwtAuth::<Claims>::hs256(secret);
+
+        // Create a token WITHOUT exp claim
+        let claims = Claims {
+            sub: "user-1".into(),
+        };
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(secret),
+        )
+        .unwrap();
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            "Authorization",
+            http::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        let req = Request::test_with_headers(Method::GET, "/", headers);
+        let result = auth.authenticate(&req).await;
+        assert!(result.is_err(), "Token without exp should be rejected");
+    }
+
+    #[tokio::test]
+    async fn allows_token_without_exp_when_opted_in() {
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        struct Claims {
+            sub: String,
+        }
+
+        let secret = b"test-secret-key-for-jwt-testing!";
+        let auth = JwtAuth::<Claims>::hs256(secret).allow_no_expiry();
+
+        let claims = Claims {
+            sub: "user-1".into(),
+        };
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(secret),
+        )
+        .unwrap();
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            "Authorization",
+            http::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        let req = Request::test_with_headers(Method::GET, "/", headers);
+        let result = auth.authenticate(&req).await;
+        assert!(
+            result.is_ok(),
+            "Token without exp should be accepted with allow_no_expiry"
+        );
+    }
+
+    #[tokio::test]
+    async fn jwt_error_does_not_leak_internals() {
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        struct Claims {
+            sub: String,
+            exp: u64,
+        }
+
+        let secret = b"test-secret-key-for-jwt-testing!";
+        let auth = JwtAuth::<Claims>::hs256(secret);
+
+        // Create a token signed with a DIFFERENT secret
+        let wrong_secret = b"wrong-secret-key-for-jwt-tests!";
+        let exp = future_exp();
+        let claims = Claims {
+            sub: "user-1".into(),
+            exp,
+        };
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(wrong_secret),
+        )
+        .unwrap();
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            "Authorization",
+            http::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        let req = Request::test_with_headers(Method::GET, "/", headers);
+        let result = auth.authenticate(&req).await;
+        let err = result.unwrap_err();
+
+        // Must say "Invalid token", NOT "InvalidSignature" or any jsonwebtoken internal
+        match err {
+            AuthError::Invalid(msg) => assert_eq!(msg, "Invalid token"),
+            other => panic!("Expected AuthError::Invalid, got: {:?}", other),
+        }
     }
 }
