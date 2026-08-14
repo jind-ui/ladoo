@@ -9,35 +9,43 @@ use std::fmt;
 /// The application environment.
 ///
 /// Detected from `LADOO_ENV` → `APP_ENV` → defaults to
-/// [`Development`](Self::Development). Unknown values are treated as
-/// development.
+/// [`Production`](Self::Production) when neither is set. This fail-safe
+/// default means an app that forgets to set an environment variable in
+/// production never accidentally leaks dev-mode error detail. Values
+/// that are set but not recognized (anything other than `"production"`
+/// or `"staging"`) are treated as development.
 ///
 /// # Examples
 ///
 /// ```
 /// use ladoo::config::Environment;
 ///
-/// // Without env vars set, defaults to Development
+/// // Without env vars set, defaults to Production
 /// # std::env::remove_var("LADOO_ENV");
 /// # std::env::remove_var("APP_ENV");
 /// let env = Environment::detect();
-/// assert!(env.is_dev());
-/// assert_eq!(env.as_str(), "development");
+/// assert!(!env.is_dev());
+/// assert_eq!(env.as_str(), "production");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
-    /// Local development (the default).
+    /// Local development. Enabled by setting `LADOO_ENV=development`
+    /// (or an unrecognized value) — never the default.
     Development,
     /// Pre-production staging environment.
     Staging,
-    /// Live production environment.
+    /// Live production environment. The default when neither `LADOO_ENV`
+    /// nor `APP_ENV` is set.
     Production,
 }
 
 impl Environment {
-    /// Detect the environment from `LADOO_ENV` → `APP_ENV` → default `Development`.
+    /// Detect the environment from `LADOO_ENV` → `APP_ENV` → default `Production`.
     ///
-    /// Unrecognized values are treated as [`Development`](Self::Development).
+    /// Unrecognized values (for a variable that *is* set) are treated as
+    /// [`Development`](Self::Development). This is a fail-safe default:
+    /// forgetting to set an environment variable in production must never
+    /// silently enable dev-mode error detail.
     pub fn detect() -> Self {
         match std::env::var("LADOO_ENV").or_else(|_| std::env::var("APP_ENV")) {
             Ok(val) => match val.as_str() {
@@ -45,7 +53,14 @@ impl Environment {
                 "staging" => Self::Staging,
                 _ => Self::Development,
             },
-            Err(_) => Self::Development,
+            Err(_) => {
+                #[cfg(feature = "logging")]
+                tracing::warn!(
+                    "Neither LADOO_ENV nor APP_ENV is set — defaulting to production. \
+                     Set LADOO_ENV=development for debug error pages."
+                );
+                Self::Production
+            }
         }
     }
 
@@ -327,11 +342,20 @@ mod tests {
     }
 
     #[test]
-    fn detect_defaults_to_development() {
+    fn detect_defaults_to_production() {
         let _g = lock_env();
         std::env::remove_var("LADOO_ENV");
         std::env::remove_var("APP_ENV");
-        assert_eq!(Environment::detect(), Environment::Development);
+        assert_eq!(Environment::detect(), Environment::Production);
+    }
+
+    #[test]
+    fn defaults_to_production_when_no_env_var() {
+        let _g = lock_env();
+        // Clear both env vars to test the default
+        std::env::remove_var("LADOO_ENV");
+        std::env::remove_var("APP_ENV");
+        assert_eq!(Environment::detect(), Environment::Production);
     }
 
     #[test]

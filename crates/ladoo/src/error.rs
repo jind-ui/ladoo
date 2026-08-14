@@ -173,9 +173,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Check whether the application is running in development mode.
 ///
-/// Returns `true` unless `LADOO_ENV` or `APP_ENV` is set to
-/// `"production"` or `"staging"`. Defaults to `true` (dev mode)
-/// when neither variable is set.
+/// Returns `true` only when `LADOO_ENV` or `APP_ENV` is explicitly set to
+/// `"development"` (or an unrecognized value). Defaults to `false`
+/// (production mode) when neither variable is set — a fail-safe default
+/// so a deployment that forgets to set the environment variable never
+/// accidentally leaks dev-mode error detail.
 ///
 /// # Examples
 ///
@@ -184,7 +186,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 ///
 /// std::env::remove_var("LADOO_ENV");
 /// std::env::remove_var("APP_ENV");
-/// assert!(is_dev_mode());
+/// assert!(!is_dev_mode());
 /// ```
 pub fn is_dev_mode() -> bool {
     crate::config::Environment::detect().is_dev()
@@ -489,8 +491,7 @@ pub(crate) mod tests {
     #[test]
     fn error_into_response_dev_mode_returns_html() {
         let _guard = lock_env();
-        std::env::remove_var("LADOO_ENV");
-        std::env::remove_var("APP_ENV");
+        std::env::set_var("LADOO_ENV", "development");
         let err = Error::not_found("user not found");
         let resp = err.into_response();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -498,28 +499,31 @@ pub(crate) mod tests {
         let body = std::str::from_utf8(resp.body_bytes()).unwrap();
         assert!(body.contains("404"));
         assert!(body.contains("user not found"));
+        std::env::remove_var("LADOO_ENV");
     }
 
     #[test]
     fn error_into_response_dev_mode_includes_detail() {
         let _guard = lock_env();
-        std::env::remove_var("LADOO_ENV");
+        std::env::set_var("LADOO_ENV", "development");
         let err = Error::internal("server error")
             .with_detail("connection pool exhausted");
         let resp = err.into_response();
         let body = std::str::from_utf8(resp.body_bytes()).unwrap();
         assert!(body.contains("connection pool exhausted"));
+        std::env::remove_var("LADOO_ENV");
     }
 
     #[test]
     fn error_into_response_dev_mode_includes_error_chain() {
         let _guard = lock_env();
-        std::env::remove_var("LADOO_ENV");
+        std::env::set_var("LADOO_ENV", "development");
         let inner = std::io::Error::new(std::io::ErrorKind::Other, "disk full");
         let err = Error::internal("write failed").with_source(inner);
         let resp = err.into_response();
         let body = std::str::from_utf8(resp.body_bytes()).unwrap();
         assert!(body.contains("disk full"));
+        std::env::remove_var("LADOO_ENV");
     }
 
     #[test]
@@ -581,11 +585,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn is_dev_mode_default_true() {
+    fn is_dev_mode_default_false() {
         let _guard = lock_env();
         std::env::remove_var("LADOO_ENV");
         std::env::remove_var("APP_ENV");
-        assert!(is_dev_mode());
+        assert!(!is_dev_mode());
     }
 
     #[test]
@@ -638,8 +642,7 @@ pub(crate) mod tests {
     #[test]
     fn dev_html_escapes_message_and_detail() {
         let _guard = lock_env();
-        std::env::remove_var("LADOO_ENV");
-        std::env::remove_var("APP_ENV");
+        std::env::set_var("LADOO_ENV", "development");
         let err = Error::internal("<script>alert(1)</script>")
             .with_detail("detail with <b>html</b> & \"quotes\"");
         let resp = err.into_response();
@@ -651,16 +654,17 @@ pub(crate) mod tests {
         assert!(body.contains("&lt;script&gt;"));
         assert!(body.contains("&amp;"));
         assert!(body.contains("&quot;"));
+        std::env::remove_var("LADOO_ENV");
     }
 
     #[test]
     fn dev_html_page_has_ladoo_footer() {
         let _guard = lock_env();
-        std::env::remove_var("LADOO_ENV");
-        std::env::remove_var("APP_ENV");
+        std::env::set_var("LADOO_ENV", "development");
         let err = Error::internal("boom");
         let resp = err.into_response();
         let body = std::str::from_utf8(resp.body_bytes()).unwrap();
         assert!(body.contains("Ladoo"));
+        std::env::remove_var("LADOO_ENV");
     }
 }

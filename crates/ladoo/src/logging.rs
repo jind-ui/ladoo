@@ -363,9 +363,18 @@ mod tests {
     #[test]
     fn is_dev_format_true_in_development() {
         let _g = lock_env();
+        std::env::set_var("LADOO_ENV", "development");
+        let result = is_dev_format();
+        std::env::remove_var("LADOO_ENV");
+        assert!(result);
+    }
+
+    #[test]
+    fn is_dev_format_false_by_default() {
+        let _g = lock_env();
         std::env::remove_var("LADOO_ENV");
         std::env::remove_var("APP_ENV");
-        assert!(is_dev_format());
+        assert!(!is_dev_format());
     }
 
     #[test]
