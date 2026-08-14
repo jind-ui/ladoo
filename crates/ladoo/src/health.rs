@@ -306,7 +306,20 @@ pub(crate) async fn health_handler(
                 serde_json::Value::String(if result.ok { "up" } else { "down" }.into()),
             );
             if let Some(err) = &result.error {
-                check.insert("error".into(), serde_json::Value::String(err.clone()));
+                if crate::error::is_dev_mode() {
+                    check.insert("error".into(), serde_json::Value::String(err.clone()));
+                } else {
+                    #[cfg(feature = "logging")]
+                    tracing::warn!(
+                        check = %result.name,
+                        error = %err,
+                        "health check failed"
+                    );
+                    check.insert(
+                        "error".into(),
+                        serde_json::Value::String("check failed".into()),
+                    );
+                }
             }
             if config.include_latency {
                 check.insert(
@@ -593,6 +606,8 @@ mod tests {
 
     #[tokio::test]
     async fn handler_failed_check_shows_error() {
+        let _guard = crate::error::tests::lock_env();
+        std::env::set_var("LADOO_ENV", "development");
         let registry = make_registry(vec![Arc::new(AlwaysSick)]);
         let config = Arc::new(HealthConfig::new());
         let resp = health_handler(State(registry), State(config)).await;
@@ -603,5 +618,62 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("connection refused"));
+        std::env::remove_var("LADOO_ENV");
+    }
+
+    #[tokio::test]
+    async fn health_redacts_errors_in_prod_mode() {
+        let _guard = crate::error::tests::lock_env();
+        std::env::remove_var("LADOO_ENV");
+        std::env::remove_var("APP_ENV");
+        // No env var = production mode (after Task 1's default flip)
+
+        let app = crate::app::App::new()
+            .health("failing", || async {
+                Err(crate::error::Error::internal(
+                    "connection refused: postgres://admin:secret@db:5432",
+                ))
+            })
+            .health_config(HealthConfig::default());
+
+        let client = app.into_client();
+        let resp = client.get("/health").send().await;
+        let body = resp.text();
+
+        // Must contain "check failed", NOT the actual error with connection string
+        assert!(body.contains("check failed"), "Error should be redacted in prod");
+        assert!(
+            !body.contains("postgres://"),
+            "Connection string must not leak in prod"
+        );
+        assert!(
+            !body.contains("connection refused"),
+            "Error details must not leak in prod"
+        );
+    }
+
+    #[tokio::test]
+    async fn health_shows_full_error_in_dev_mode() {
+        let _guard = crate::error::tests::lock_env();
+        std::env::set_var("LADOO_ENV", "development");
+
+        let app = crate::app::App::new()
+            .health("failing", || async {
+                Err(crate::error::Error::internal(
+                    "connection refused: postgres://db:5432",
+                ))
+            })
+            .health_config(HealthConfig::default());
+
+        let client = app.into_client();
+        let resp = client.get("/health").send().await;
+        let body = resp.text();
+
+        assert!(
+            body.contains("connection refused"),
+            "Dev mode should show full error"
+        );
+
+        std::env::remove_var("LADOO_ENV");
     }
 }
