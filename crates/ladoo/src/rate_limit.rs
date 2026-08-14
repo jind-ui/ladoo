@@ -27,7 +27,6 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use dashmap::DashMap;
-use tokio::time::Instant;
 
 use crate::context::Context;
 use crate::error::Result;
@@ -47,7 +46,7 @@ pub struct RateResult {
     /// Remaining requests in the current window.
     pub remaining: u64,
     /// When the current window resets.
-    pub reset_at: Instant,
+    pub reset_at: std::time::Instant,
 }
 
 /// Pluggable storage backend for rate limit counters.
@@ -108,7 +107,7 @@ pub trait RateStore: Send + Sync + 'static {
 /// For distributed deployments, implement [`RateStore`] for a shared
 /// backend like Redis.
 pub struct MemoryStore {
-    entries: Arc<DashMap<String, (u64, Instant)>>,
+    entries: Arc<DashMap<String, (u64, tokio::time::Instant)>>,
 }
 
 impl MemoryStore {
@@ -142,20 +141,20 @@ impl MemoryStore {
         Self { entries }
     }
 
-    fn spawn_reaper(weak: Weak<DashMap<String, (u64, Instant)>>, interval: Duration) {
+    fn spawn_reaper(weak: Weak<DashMap<String, (u64, tokio::time::Instant)>>, interval: Duration) {
         // Capture the first deadline synchronously, at spawn time, rather than
         // letting the first `sleep` call compute `now + interval` whenever the
         // task happens to get its first poll. Under `tokio::time::pause`, the
         // task may not be polled until after time has already been advanced,
         // which would otherwise push the deadline further into the future than
         // intended and make the reaper miss the eviction window entirely.
-        let mut deadline = Instant::now() + interval;
+        let mut deadline = tokio::time::Instant::now() + interval;
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep_until(deadline).await;
                 match weak.upgrade() {
                     Some(entries) => {
-                        let now = Instant::now();
+                        let now = tokio::time::Instant::now();
                         entries.retain(|_, (_, expires)| now < *expires);
                         deadline = now + interval;
                     }
@@ -180,7 +179,7 @@ impl RateStore for MemoryStore {
         limit: u64,
         window: Duration,
     ) -> RateResult {
-        let now = Instant::now();
+        let now = tokio::time::Instant::now();
 
         let mut entry = self.entries.entry(key.to_string()).or_insert_with(|| {
             (0, now + window)
@@ -196,7 +195,7 @@ impl RateStore for MemoryStore {
 
         *count += 1;
         let current_count = *count;
-        let reset_at = *expires;
+        let reset_at = (*expires).into_std();
 
         if current_count <= limit {
             RateResult {
@@ -476,7 +475,7 @@ impl<S: RateStore + 'static> Middleware for RateLimit<S> {
 
             let reset_secs = result
                 .reset_at
-                .saturating_duration_since(Instant::now())
+                .saturating_duration_since(std::time::Instant::now())
                 .as_secs();
 
             if !result.allowed {
