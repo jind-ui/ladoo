@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use http::StatusCode;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited, LengthLimitError};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
@@ -50,6 +50,11 @@ use crate::state::TypeMap;
 /// `shutdown_timeout` to finish gracefully — hyper stops accepting new
 /// requests on each connection but lets the current one complete — before
 /// being forcibly aborted.
+///
+/// `body_limit` caps the size (in bytes) of each request body; requests
+/// exceeding it receive a `413 Payload Too Large` response before the
+/// handler runs.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn serve(
     router: Router,
     listener: TcpListener,
@@ -58,6 +63,7 @@ pub(crate) async fn serve(
     shutdown: impl Future<Output = ()> + Send + 'static,
     shutdown_timeout: Duration,
     shutdown_hooks: Vec<ShutdownHook>,
+    body_limit: usize,
 ) {
     let router = Arc::new(router);
     let global_middleware: Arc<[Arc<dyn Middleware>]> = global_middleware.into();
@@ -91,7 +97,9 @@ pub(crate) async fn serve(
                         let state = state.clone();
                         let global_mw = global_mw.clone();
                         async move {
-                            let response = handle_request(&router, hyper_req, state, &global_mw, addr).await;
+                            let response =
+                                handle_request(&router, hyper_req, state, &global_mw, addr, body_limit)
+                                    .await;
                             Ok::<_, Infallible>(response)
                         }
                     });
@@ -186,18 +194,32 @@ pub(crate) async fn serve(
 
 /// Route a hyper request through the router, run the combined middleware
 /// chain, and call the matched handler.
+///
+/// `body_limit` caps the request body size in bytes; bodies exceeding it
+/// are rejected with `413 Payload Too Large` before routing occurs.
 async fn handle_request(
     router: &Router,
     hyper_req: hyper::Request<hyper::body::Incoming>,
     state: Arc<TypeMap>,
     global_middleware: &[Arc<dyn Middleware>],
     peer_addr: std::net::SocketAddr,
+    body_limit: usize,
 ) -> hyper::Response<Full<Bytes>> {
     let (parts, incoming) = hyper_req.into_parts();
 
-    let body = match incoming.collect().await {
+    let limited = Limited::new(incoming, body_limit);
+    let body = match limited.collect().await {
         Ok(collected) => collected.to_bytes(),
-        Err(_) => {
+        Err(e) => {
+            if e.downcast_ref::<LengthLimitError>().is_some() {
+                return hyper::Response::builder()
+                    .status(StatusCode::PAYLOAD_TOO_LARGE)
+                    .header(http::header::CONTENT_TYPE, "application/json")
+                    .body(Full::new(Bytes::from(
+                        r#"{"error":"Payload too large"}"#,
+                    )))
+                    .unwrap();
+            }
             return hyper::Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
@@ -382,7 +404,8 @@ mod tests {
         let base_url = format!("http://{addr}");
 
         let handle = tokio::spawn(async move {
-            let (router, state, middleware, shutdown_timeout, shutdown_hooks) = app.into_parts();
+            let (router, state, middleware, shutdown_timeout, shutdown_hooks, body_limit) =
+                app.into_parts();
             serve(
                 router,
                 listener,
@@ -391,6 +414,7 @@ mod tests {
                 std::future::pending::<()>(),
                 shutdown_timeout,
                 shutdown_hooks,
+                body_limit,
             )
             .await;
         });
@@ -420,6 +444,7 @@ mod tests {
                 },
                 std::time::Duration::from_secs(5),
                 vec![],
+                2_097_152,
             )
             .await;
         });
@@ -446,7 +471,8 @@ mod tests {
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-        let (router, state, middleware, _shutdown_timeout, _shutdown_hooks) = app.into_parts();
+        let (router, state, middleware, _shutdown_timeout, _shutdown_hooks, body_limit) =
+            app.into_parts();
         let handle = tokio::spawn(async move {
             serve(
                 router,
@@ -458,6 +484,7 @@ mod tests {
                 },
                 std::time::Duration::from_secs(5),
                 vec![],
+                body_limit,
             )
             .await;
         });
@@ -513,7 +540,8 @@ mod tests {
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-        let (router, state, middleware, _shutdown_timeout, _shutdown_hooks) = app.into_parts();
+        let (router, state, middleware, _shutdown_timeout, _shutdown_hooks, body_limit) =
+            app.into_parts();
         let handle = tokio::spawn(async move {
             serve(
                 router,
@@ -525,6 +553,7 @@ mod tests {
                 },
                 std::time::Duration::from_millis(200),
                 vec![],
+                body_limit,
             )
             .await;
         });
@@ -684,6 +713,70 @@ mod tests {
         assert_eq!(resp.text().await.unwrap(), "hello body");
 
         handle.abort();
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_body_with_413() {
+        let server = App::new()
+            .body_limit(64) // 64 bytes max
+            .post("/echo", |req: crate::request::Request| {
+                String::from_utf8_lossy(req.body()).to_string()
+            })
+            .spawn()
+            .await;
+
+        let big_body = "x".repeat(128); // 128 bytes > 64 limit
+        let resp = server
+            .post("/echo")
+            .header("content-type", "text/plain")
+            .body(big_body.as_bytes())
+            .send()
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(resp.text().contains("Payload too large"));
+    }
+
+    #[tokio::test]
+    async fn accepts_body_under_limit() {
+        let server = App::new()
+            .body_limit(256)
+            .post("/echo", |req: crate::request::Request| {
+                String::from_utf8_lossy(req.body()).to_string()
+            })
+            .spawn()
+            .await;
+
+        let resp = server
+            .post("/echo")
+            .header("content-type", "text/plain")
+            .body(b"hello")
+            .send()
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.text(), "hello");
+    }
+
+    #[tokio::test]
+    async fn default_body_limit_is_2mib_over_http() {
+        let server = App::new()
+            .post("/echo", |req: crate::request::Request| {
+                req.body().len().to_string()
+            })
+            .spawn()
+            .await;
+
+        // Exactly at the 2 MiB default — should pass.
+        let body = "x".repeat(2_097_152);
+        let resp = server
+            .post("/echo")
+            .header("content-type", "text/plain")
+            .body(body.as_bytes())
+            .send()
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[cfg(feature = "json")]
@@ -1186,6 +1279,7 @@ mod tests {
                 },
                 std::time::Duration::from_secs(5),
                 vec![hook],
+                2_097_152,
             )
             .await;
         });
@@ -1244,6 +1338,7 @@ mod tests {
                 },
                 std::time::Duration::from_secs(5),
                 hooks,
+                2_097_152,
             )
             .await;
         });
@@ -1294,6 +1389,7 @@ mod tests {
                 },
                 std::time::Duration::from_secs(5),
                 vec![fast_hook, slow_hook],
+                2_097_152,
             )
             .await;
         });

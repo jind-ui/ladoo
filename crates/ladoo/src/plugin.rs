@@ -116,7 +116,7 @@ mod tests {
             greeting: "hi".into(),
         };
         let app = plugin.register(app);
-        let (_, state, _, _, _) = app.into_parts();
+        let (_, state, _, _, _, _) = app.into_parts();
         assert_eq!(state.get::<String>(), Some(&"hi".to_string()));
     }
 

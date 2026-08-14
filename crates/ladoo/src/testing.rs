@@ -271,12 +271,14 @@ pub struct TestServer {
 #[cfg(any(test, feature = "test-server"))]
 impl TestServer {
     /// Create and start a test server from app parts.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn start(
         router: Router,
         state: TypeMap,
         global_middleware: Vec<Arc<dyn Middleware>>,
         shutdown_timeout: std::time::Duration,
         shutdown_hooks: Vec<ShutdownHook>,
+        body_limit: usize,
     ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -293,6 +295,7 @@ impl TestServer {
                 std::future::pending::<()>(),
                 shutdown_timeout,
                 shutdown_hooks,
+                body_limit,
             )
             .await;
         });

@@ -52,6 +52,7 @@ pub struct App {
     #[cfg(feature = "logging")]
     logging_config: crate::logging::LoggingConfig,
     shutdown_timeout: std::time::Duration,
+    body_limit: usize,
     shutdown_hooks: Vec<ShutdownHook>,
     plugin_names: Vec<String>,
     health_registry: crate::health::HealthRegistry,
@@ -68,6 +69,7 @@ impl App {
             #[cfg(feature = "logging")]
             logging_config: Default::default(),
             shutdown_timeout: std::time::Duration::from_secs(30),
+            body_limit: 2_097_152, // 2 MiB default
             shutdown_hooks: Vec::new(),
             plugin_names: Vec::new(),
             health_registry: crate::health::HealthRegistry::new(),
@@ -329,6 +331,25 @@ impl App {
         self
     }
 
+    /// Set the maximum request body size in bytes. Default: 2 MiB (2,097,152 bytes).
+    ///
+    /// Requests with bodies exceeding this limit receive a `413 Payload Too Large`
+    /// response before the handler runs.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ladoo::prelude::*;
+    ///
+    /// let app = App::new()
+    ///     .body_limit(10 * 1024 * 1024) // 10 MiB for file uploads
+    ///     .post("/upload", |_req: Request| "ok");
+    /// ```
+    pub fn body_limit(mut self, max_bytes: usize) -> Self {
+        self.body_limit = max_bytes;
+        self
+    }
+
     /// Register an async shutdown hook.
     ///
     /// The hook runs after all connections have drained (or the shutdown
@@ -521,7 +542,8 @@ impl App {
     /// assert_eq!(resp.text(), "hello");
     /// ```
     pub fn into_client(self) -> crate::testing::TestClient {
-        let (router, state, middleware, _shutdown_timeout, _shutdown_hooks) = self.into_parts();
+        let (router, state, middleware, _shutdown_timeout, _shutdown_hooks, _body_limit) =
+            self.into_parts();
         crate::testing::TestClient::new(router, state, middleware)
     }
 
@@ -555,9 +577,17 @@ impl App {
     /// ```
     #[cfg(any(test, feature = "test-server"))]
     pub async fn spawn(self) -> crate::testing::TestServer {
-        let (router, state, middleware, shutdown_timeout, shutdown_hooks) = self.into_parts();
-        crate::testing::TestServer::start(router, state, middleware, shutdown_timeout, shutdown_hooks)
-            .await
+        let (router, state, middleware, shutdown_timeout, shutdown_hooks, body_limit) =
+            self.into_parts();
+        crate::testing::TestServer::start(
+            router,
+            state,
+            middleware,
+            shutdown_timeout,
+            shutdown_hooks,
+            body_limit,
+        )
+        .await
     }
 
     /// Consume the App and return the inner router.
@@ -571,10 +601,13 @@ impl App {
     }
 
     /// Consume the App and return the inner router, application state,
-    /// global middleware stack, shutdown timeout, and shutdown hooks.
+    /// global middleware stack, shutdown timeout, shutdown hooks, and
+    /// body limit.
     ///
     /// Used internally by the server to access routes, dependency
-    /// injection state, middleware, and shutdown configuration together.
+    /// injection state, middleware, shutdown configuration, and the
+    /// request body size limit together.
+    #[allow(clippy::type_complexity)]
     pub(crate) fn into_parts(
         mut self,
     ) -> (
@@ -583,6 +616,7 @@ impl App {
         Vec<Arc<dyn Middleware>>,
         std::time::Duration,
         Vec<ShutdownHook>,
+        usize,
     ) {
         let registry = std::mem::take(&mut self.health_registry);
         let config = std::mem::take(&mut self.health_config);
@@ -604,6 +638,7 @@ impl App {
             self.global_middleware,
             self.shutdown_timeout,
             self.shutdown_hooks,
+            self.body_limit,
         )
     }
 
@@ -658,7 +693,8 @@ impl App {
                 .unwrap_or_else(|e| panic!("failed to bind to {addr}: {e}"));
 
             println!("Ladoo listening on http://{addr}");
-            let (router, state, middleware, shutdown_timeout, shutdown_hooks) = self.into_parts();
+            let (router, state, middleware, shutdown_timeout, shutdown_hooks, body_limit) =
+                self.into_parts();
             crate::server::serve(
                 router,
                 listener,
@@ -667,6 +703,7 @@ impl App {
                 crate::shutdown::shutdown_signal(),
                 shutdown_timeout,
                 shutdown_hooks,
+                body_limit,
             )
             .await;
         });
@@ -711,7 +748,8 @@ impl App {
         #[cfg(feature = "logging")]
         self.inject_builtin_middleware();
 
-        let (router, state, middleware, shutdown_timeout, shutdown_hooks) = self.into_parts();
+        let (router, state, middleware, shutdown_timeout, shutdown_hooks, body_limit) =
+            self.into_parts();
         crate::server::serve(
             router,
             listener,
@@ -720,6 +758,7 @@ impl App {
             crate::shutdown::shutdown_signal(),
             shutdown_timeout,
             shutdown_hooks,
+            body_limit,
         )
         .await;
     }
@@ -899,7 +938,8 @@ mod tests {
     #[test]
     fn into_parts_returns_router_and_state() {
         let app = App::new().provide(42_u32).get("/", |_req: Request| "hi");
-        let (router, state, _middleware, _shutdown_timeout, _shutdown_hooks) = app.into_parts();
+        let (router, state, _middleware, _shutdown_timeout, _shutdown_hooks, _body_limit) =
+            app.into_parts();
         assert!(router.find(&Method::GET, "/").is_some());
         assert_eq!(state.get::<u32>(), Some(&42));
     }
@@ -912,7 +952,7 @@ mod tests {
                 .default_per_page(25)
                 .max_per_page(50),
         );
-        let (_, state, _, _, _) = app.into_parts();
+        let (_, state, _, _, _, _) = app.into_parts();
         let config = state.get::<crate::pagination::PaginationConfig>().unwrap();
         assert_eq!(config.default_per_page, 25);
         assert_eq!(config.max_per_page, 50);
@@ -921,15 +961,29 @@ mod tests {
     #[test]
     fn shutdown_timeout_stores_duration() {
         let app = App::new().shutdown_timeout(std::time::Duration::from_secs(60));
-        let (_, _, _, timeout, _) = app.into_parts();
+        let (_, _, _, timeout, _, _) = app.into_parts();
         assert_eq!(timeout, std::time::Duration::from_secs(60));
     }
 
     #[test]
     fn default_shutdown_timeout_is_30s() {
         let app = App::new();
-        let (_, _, _, timeout, _) = app.into_parts();
+        let (_, _, _, timeout, _, _) = app.into_parts();
         assert_eq!(timeout, std::time::Duration::from_secs(30));
+    }
+
+    #[test]
+    fn body_limit_stores_value() {
+        let app = App::new().body_limit(1024);
+        let (_, _, _, _, _, body_limit) = app.into_parts();
+        assert_eq!(body_limit, 1024);
+    }
+
+    #[test]
+    fn default_body_limit_is_2mib() {
+        let app = App::new();
+        let (_, _, _, _, _, body_limit) = app.into_parts();
+        assert_eq!(body_limit, 2_097_152);
     }
 
     #[test]
@@ -937,7 +991,7 @@ mod tests {
         let app = App::new()
             .on_shutdown(|| async {})
             .on_shutdown(|| async {});
-        let (_, _, _, _, hooks) = app.into_parts();
+        let (_, _, _, _, hooks, _) = app.into_parts();
         assert_eq!(hooks.len(), 2);
     }
 
@@ -958,7 +1012,7 @@ mod tests {
             r.get("/users", |_req: Request| "users")
                 .post("/users", |_req: Request| "created")
         });
-        let (router, _, _, _, _) = app.into_parts();
+        let (router, _, _, _, _, _) = app.into_parts();
         assert!(router.find(&Method::GET, "/api/users").is_some());
         assert!(router.find(&Method::POST, "/api/users").is_some());
     }
@@ -967,7 +1021,7 @@ mod tests {
     fn mount_adds_prefixed_routes() {
         let api = Router::new().get("/items", |_req: Request| "items");
         let app = App::new().mount("/api", api);
-        let (router, _, _, _, _) = app.into_parts();
+        let (router, _, _, _, _, _) = app.into_parts();
         assert!(router.find(&Method::GET, "/api/items").is_some());
     }
 
@@ -1026,7 +1080,7 @@ mod tests {
         let app = App::test()
             .disable_request_logging()
             .get("/", |_req: crate::request::Request| "hello");
-        let (_, _, middleware, _, _) = app.into_parts();
+        let (_, _, middleware, _, _, _) = app.into_parts();
         // No built-in middleware when disabled
         assert!(middleware.is_empty());
     }
@@ -1076,7 +1130,7 @@ mod tests {
         #[test]
         fn plugin_registers_state_and_route() {
             let app = App::new().plugin(GreetPlugin);
-            let (router, state, _, _, _) = app.into_parts();
+            let (router, state, _, _, _, _) = app.into_parts();
             assert_eq!(state.get::<String>(), Some(&"hello".to_string()));
             assert!(router.find(&Method::GET, "/greet").is_some());
         }
@@ -1098,7 +1152,7 @@ mod tests {
             let app = App::new()
                 .plugin(DuplicatePlugin(1))
                 .plugin(DuplicatePlugin(2));
-            let (_, state, _, _, _) = app.into_parts();
+            let (_, state, _, _, _, _) = app.into_parts();
             assert_eq!(state.get::<u32>(), Some(&1));
         }
 
@@ -1128,7 +1182,7 @@ mod tests {
         #[test]
         fn sub_plugin_registers_via_parent() {
             let app = App::new().plugin(SubPluginParent);
-            let (_, state, _, _, _) = app.into_parts();
+            let (_, state, _, _, _, _) = app.into_parts();
             assert_eq!(state.get::<u32>(), Some(&99));
         }
 
@@ -1138,7 +1192,7 @@ mod tests {
                 .get("/before", |_req: Request| "before")
                 .plugin(GreetPlugin)
                 .get("/after", |_req: Request| "after");
-            let (router, _, _, _, _) = app.into_parts();
+            let (router, _, _, _, _, _) = app.into_parts();
             assert!(router.find(&Method::GET, "/before").is_some());
             assert!(router.find(&Method::GET, "/greet").is_some());
             assert!(router.find(&Method::GET, "/after").is_some());
@@ -1165,7 +1219,7 @@ mod tests {
         #[test]
         fn provide_healthy_stores_state_and_registry() {
             let app = App::new().provide_healthy(MockDb);
-            let (_, state, _, _, _) = app.into_parts();
+            let (_, state, _, _, _, _) = app.into_parts();
             assert!(state.get::<MockDb>().is_some());
         }
 
@@ -1173,7 +1227,7 @@ mod tests {
         fn health_closure_registers_check() {
             let app = App::new().health("test", || async { Ok(()) });
             // Verify by checking that into_parts produces a route
-            let (router, _, _, _, _) = app.into_parts();
+            let (router, _, _, _, _, _) = app.into_parts();
             assert!(router.find(&Method::GET, "/health").is_some());
         }
 
@@ -1182,7 +1236,7 @@ mod tests {
             let app = App::new()
                 .health("test", || async { Ok(()) })
                 .health_config(HealthConfig::new().path("/healthz"));
-            let (router, _, _, _, _) = app.into_parts();
+            let (router, _, _, _, _, _) = app.into_parts();
             assert!(router.find(&Method::GET, "/healthz").is_some());
             assert!(router.find(&Method::GET, "/health").is_none());
         }
@@ -1190,7 +1244,7 @@ mod tests {
         #[test]
         fn no_health_checks_no_route() {
             let app = App::new();
-            let (router, _, _, _, _) = app.into_parts();
+            let (router, _, _, _, _, _) = app.into_parts();
             assert!(router.find(&Method::GET, "/health").is_none());
         }
 
@@ -1223,7 +1277,7 @@ mod tests {
         #[test]
         fn config_provides_as_state() {
             let app = App::new().config::<TestConfig>();
-            let (_, state, _, _, _) = app.into_parts();
+            let (_, state, _, _, _, _) = app.into_parts();
             assert_eq!(state.get::<TestConfig>().unwrap().port, 9090);
         }
 
@@ -1248,7 +1302,7 @@ mod tests {
             let app = App::new()
                 .config::<TestConfig>()
                 .get("/", |_req: Request| "hello");
-            let (router, state, _, _, _) = app.into_parts();
+            let (router, state, _, _, _, _) = app.into_parts();
             assert!(router.find(&Method::GET, "/").is_some());
             assert_eq!(state.get::<TestConfig>().unwrap().port, 9090);
         }
