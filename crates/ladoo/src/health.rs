@@ -651,7 +651,10 @@ mod tests {
         let body = resp.text();
 
         // Must contain "check failed", NOT the actual error with connection string
-        assert!(body.contains("check failed"), "Error should be redacted in prod");
+        assert!(
+            body.contains("check failed"),
+            "Error should be redacted in prod"
+        );
         assert!(
             !body.contains("postgres://"),
             "Connection string must not leak in prod"
