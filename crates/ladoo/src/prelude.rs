@@ -29,6 +29,10 @@ pub use crate::handler::IntoHandler;
 pub use crate::health::{HealthCheckable, HealthConfig};
 #[cfg(feature = "cache")]
 pub use crate::cache::{Cache, CacheStore};
+#[cfg(feature = "jobs")]
+pub use crate::job::{BackoffStrategy, Job, JobConfig, JobContext, JobError, JobHandle, JobRunner};
+#[cfg(all(feature = "macros", feature = "jobs"))]
+pub use crate::Job;
 #[cfg(feature = "json")]
 pub use crate::extract::Json;
 #[cfg(feature = "json")]
