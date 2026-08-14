@@ -178,7 +178,35 @@ impl Cors {
     ///
     /// When enabled, `Access-Control-Allow-Origin` echoes the specific
     /// origin instead of `*` (required by the CORS spec).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `allow` is `true` and origins are set to wildcard (`AllowedOrigins::Any`).
+    /// Wildcard origins with credentials is a CSRF vector — use an explicit origin
+    /// list instead:
+    ///
+    /// ```rust,should_panic
+    /// use ladoo::prelude::*;
+    ///
+    /// // This panics:
+    /// Cors::permissive().allow_credentials(true);
+    /// ```
+    ///
+    /// ```rust
+    /// use ladoo::prelude::*;
+    ///
+    /// // This is fine:
+    /// Cors::new()
+    ///     .allow_origin("https://example.com")
+    ///     .allow_credentials(true);
+    /// ```
     pub fn allow_credentials(mut self, allow: bool) -> Self {
+        if allow && matches!(self.origins, AllowedOrigins::Any) {
+            panic!(
+                "CORS: allow_credentials(true) cannot be used with wildcard origins. \
+                 Use .allow_origin([...]) with an explicit origin list."
+            );
+        }
         self.allow_credentials = allow;
         self
     }
@@ -354,6 +382,21 @@ mod tests {
     #[test]
     fn allow_credentials_can_be_enabled() {
         let cors = Cors::new().allow_credentials(true);
+        assert!(cors.credentials());
+    }
+
+    #[test]
+    #[should_panic(expected = "allow_credentials(true) cannot be used with wildcard origins")]
+    fn panics_on_permissive_with_credentials() {
+        Cors::permissive().allow_credentials(true);
+    }
+
+    #[test]
+    fn allows_credentials_with_explicit_origins() {
+        // Should NOT panic
+        let cors = Cors::new()
+            .allow_origin("https://example.com")
+            .allow_credentials(true);
         assert!(cors.credentials());
     }
 
