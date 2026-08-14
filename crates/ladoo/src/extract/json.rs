@@ -90,9 +90,13 @@ where
                 .into_response());
         }
         let body = req.take_body();
-        serde_json::from_slice(&body)
-            .map(Json)
-            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response())
+        serde_json::from_slice(&body).map(Json).map_err(|e| {
+            if crate::error::is_dev_mode() {
+                (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")).into_response()
+            } else {
+                (StatusCode::BAD_REQUEST, "Invalid JSON body").into_response()
+            }
+        })
     }
 }
 
@@ -173,6 +177,37 @@ mod tests {
         let result = Json::<CreateUser>::from_request(&mut req);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn json_parse_error_hides_details_in_prod_mode() {
+        let _guard = crate::error::tests::lock_env();
+        std::env::remove_var("LADOO_ENV");
+        std::env::remove_var("APP_ENV");
+        // With no env var set, we're in production mode (after the default flip).
+
+        let mut req = json_request(Method::POST, "/users", br#"{"invalid json"#);
+        let result = Json::<CreateUser>::from_request(&mut req);
+        let err_response = result.unwrap_err();
+        let body = String::from_utf8_lossy(err_response.body_bytes()).to_string();
+
+        // Must NOT contain serde details like field names or byte offsets.
+        assert_eq!(body, "Invalid JSON body");
+    }
+
+    #[test]
+    fn json_parse_error_shows_details_in_dev_mode() {
+        let _guard = crate::error::tests::lock_env();
+        std::env::set_var("LADOO_ENV", "development");
+
+        let mut req = json_request(Method::POST, "/users", br#"{"invalid json"#);
+        let result = Json::<CreateUser>::from_request(&mut req);
+        let err_response = result.unwrap_err();
+        let body = String::from_utf8_lossy(err_response.body_bytes()).to_string();
+
+        assert!(body.starts_with("Invalid JSON: "));
+
+        std::env::remove_var("LADOO_ENV");
     }
 
     #[test]
