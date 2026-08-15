@@ -488,6 +488,8 @@ pub(crate) mod shutdown;
 pub mod state;
 pub mod testing;
 pub(crate) mod server;
+#[cfg(feature = "tls")]
+pub(crate) mod tls;
 
 /// Derive `Display` and `IntoResponse` for custom error enums.
 ///

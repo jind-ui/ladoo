@@ -116,7 +116,10 @@ mod tests {
             greeting: "hi".into(),
         };
         let app = plugin.register(app);
+        #[cfg(not(feature = "tls"))]
         let (_, state, _, _, _, _) = app.into_parts();
+        #[cfg(feature = "tls")]
+        let (_, state, _, _, _, _, _) = app.into_parts();
         assert_eq!(state.get::<String>(), Some(&"hi".to_string()));
     }
 

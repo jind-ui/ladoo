@@ -36,6 +36,9 @@ use crate::request::Request;
 use crate::router::Router;
 use crate::state::TypeMap;
 
+#[cfg(feature = "tls")]
+use tokio_rustls::TlsAcceptor;
+
 /// Start serving HTTP requests using the given router, listener,
 /// application state, and global middleware stack.
 ///
@@ -54,6 +57,11 @@ use crate::state::TypeMap;
 /// `body_limit` caps the size (in bytes) of each request body; requests
 /// exceeding it receive a `413 Payload Too Large` response before the
 /// handler runs.
+///
+/// When the `tls` feature is enabled, `tls_acceptor` optionally wraps
+/// every accepted connection in a TLS handshake (10-second timeout)
+/// before serving HTTP over it. `None` serves plain HTTP; `Some` serves
+/// HTTPS exclusively on this listener.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn serve(
     router: Router,
@@ -64,6 +72,7 @@ pub(crate) async fn serve(
     shutdown_timeout: Duration,
     shutdown_hooks: Vec<ShutdownHook>,
     body_limit: usize,
+    #[cfg(feature = "tls")] tls_acceptor: Option<TlsAcceptor>,
 ) {
     let router = Arc::new(router);
     let global_middleware: Arc<[Arc<dyn Middleware>]> = global_middleware.into();
@@ -83,8 +92,9 @@ pub(crate) async fn serve(
                 let router = router.clone();
                 let state = state.clone();
                 let global_mw = global_middleware.clone();
-                let mut rx = shutdown_rx.clone();
-                let io = TokioIo::new(stream);
+                let rx = shutdown_rx.clone();
+                #[cfg(feature = "tls")]
+                let tls_acceptor = tls_acceptor.clone();
 
                 connections.spawn(async move {
                     let router = router.clone();
@@ -104,29 +114,23 @@ pub(crate) async fn serve(
                         }
                     });
 
-                    let builder = auto::Builder::new(TokioExecutor::new());
-                    let conn = builder.serve_connection_with_upgrades(io, service);
-                    tokio::pin!(conn);
-
-                    tokio::select! {
-                        result = &mut conn => {
-                            if let Err(err) = result {
-                                let err_string = err.to_string();
-                                if !err_string.contains("incomplete") {
-                                    eprintln!("connection error: {err}");
-                                }
-                            }
-                        }
-                        _ = rx.changed() => {
-                            conn.as_mut().graceful_shutdown();
-                            if let Err(err) = conn.await {
-                                let err_string = err.to_string();
-                                if !err_string.contains("incomplete") {
-                                    eprintln!("connection error during drain: {err}");
-                                }
-                            }
-                        }
+                    #[cfg(feature = "tls")]
+                    if let Some(acceptor) = tls_acceptor {
+                        let tls_stream = match tokio::time::timeout(
+                            Duration::from_secs(10),
+                            acceptor.accept(stream),
+                        )
+                        .await
+                        {
+                            Ok(Ok(s)) => s,
+                            // TLS handshake failed or timed out — drop the connection silently.
+                            Ok(Err(_)) | Err(_) => return,
+                        };
+                        drive_connection(TokioIo::new(tls_stream), service, rx).await;
+                        return;
                     }
+
+                    drive_connection(TokioIo::new(stream), service, rx).await;
                 });
             }
             _ = &mut shutdown => {
@@ -190,6 +194,50 @@ pub(crate) async fn serve(
                 }
 
                 shutdown_set.abort_all();
+            }
+        }
+    }
+}
+
+/// Drive a single connection to completion, serving HTTP/1.1 or HTTP/2
+/// (auto-detected) over any transport that implements hyper's `Read` +
+/// `Write` traits — a plain `TcpStream` or a TLS-wrapped stream both
+/// qualify, which is what lets the TLS and non-TLS paths in [`serve`]
+/// share this logic despite producing different concrete I/O types.
+///
+/// On `rx` signaling a graceful shutdown, in-flight requests on this
+/// connection are allowed to finish before it closes.
+async fn drive_connection<I, S>(io: I, service: S, mut rx: tokio::sync::watch::Receiver<bool>)
+where
+    I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
+    S: hyper::service::Service<
+            hyper::Request<hyper::body::Incoming>,
+            Response = hyper::Response<Full<Bytes>>,
+            Error = Infallible,
+        > + Send
+        + 'static,
+    S::Future: Send,
+{
+    let builder = auto::Builder::new(TokioExecutor::new());
+    let conn = builder.serve_connection_with_upgrades(io, service);
+    tokio::pin!(conn);
+
+    tokio::select! {
+        result = &mut conn => {
+            if let Err(err) = result {
+                let err_string = err.to_string();
+                if !err_string.contains("incomplete") {
+                    eprintln!("connection error: {err}");
+                }
+            }
+        }
+        _ = rx.changed() => {
+            conn.as_mut().graceful_shutdown();
+            if let Err(err) = conn.await {
+                let err_string = err.to_string();
+                if !err_string.contains("incomplete") {
+                    eprintln!("connection error during drain: {err}");
+                }
             }
         }
     }
@@ -407,7 +455,11 @@ mod tests {
         let base_url = format!("http://{addr}");
 
         let handle = tokio::spawn(async move {
+            #[cfg(not(feature = "tls"))]
             let (router, state, middleware, shutdown_timeout, shutdown_hooks, body_limit) =
+                app.into_parts();
+            #[cfg(feature = "tls")]
+            let (router, state, middleware, shutdown_timeout, shutdown_hooks, body_limit, _tls) =
                 app.into_parts();
             serve(
                 router,
@@ -418,6 +470,8 @@ mod tests {
                 shutdown_timeout,
                 shutdown_hooks,
                 body_limit,
+                #[cfg(feature = "tls")]
+                None,
             )
             .await;
         });
@@ -448,6 +502,8 @@ mod tests {
                 std::time::Duration::from_secs(5),
                 vec![],
                 2_097_152,
+                #[cfg(feature = "tls")]
+                None,
             )
             .await;
         });
@@ -474,7 +530,11 @@ mod tests {
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
+        #[cfg(not(feature = "tls"))]
         let (router, state, middleware, _shutdown_timeout, _shutdown_hooks, body_limit) =
+            app.into_parts();
+        #[cfg(feature = "tls")]
+        let (router, state, middleware, _shutdown_timeout, _shutdown_hooks, body_limit, _tls) =
             app.into_parts();
         let handle = tokio::spawn(async move {
             serve(
@@ -488,6 +548,8 @@ mod tests {
                 std::time::Duration::from_secs(5),
                 vec![],
                 body_limit,
+                #[cfg(feature = "tls")]
+                None,
             )
             .await;
         });
@@ -543,7 +605,11 @@ mod tests {
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
+        #[cfg(not(feature = "tls"))]
         let (router, state, middleware, _shutdown_timeout, _shutdown_hooks, body_limit) =
+            app.into_parts();
+        #[cfg(feature = "tls")]
+        let (router, state, middleware, _shutdown_timeout, _shutdown_hooks, body_limit, _tls) =
             app.into_parts();
         let handle = tokio::spawn(async move {
             serve(
@@ -557,6 +623,8 @@ mod tests {
                 std::time::Duration::from_millis(200),
                 vec![],
                 body_limit,
+                #[cfg(feature = "tls")]
+                None,
             )
             .await;
         });
@@ -1283,6 +1351,8 @@ mod tests {
                 std::time::Duration::from_secs(5),
                 vec![hook],
                 2_097_152,
+                #[cfg(feature = "tls")]
+                None,
             )
             .await;
         });
@@ -1342,6 +1412,8 @@ mod tests {
                 std::time::Duration::from_secs(5),
                 hooks,
                 2_097_152,
+                #[cfg(feature = "tls")]
+                None,
             )
             .await;
         });
@@ -1393,6 +1465,8 @@ mod tests {
                 std::time::Duration::from_secs(5),
                 vec![fast_hook, slow_hook],
                 2_097_152,
+                #[cfg(feature = "tls")]
+                None,
             )
             .await;
         });

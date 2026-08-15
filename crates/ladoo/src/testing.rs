@@ -305,6 +305,12 @@ impl TestServer {
                 shutdown_timeout,
                 shutdown_hooks,
                 body_limit,
+                // `TestServer` never serves TLS — see the "No TLS on
+                // TestServer" note on `App::spawn`. TLS integration
+                // tests set up their own listener and call `serve`
+                // directly instead.
+                #[cfg(feature = "tls")]
+                None,
             )
             .await;
         });
