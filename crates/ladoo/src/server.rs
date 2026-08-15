@@ -24,9 +24,9 @@ use std::time::Duration;
 use bytes::Bytes;
 use http::StatusCode;
 use http_body_util::{BodyExt, Full, Limited, LengthLimitError};
-use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto;
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
 
@@ -104,13 +104,15 @@ pub(crate) async fn serve(
                         }
                     });
 
-                    let mut conn = http1::Builder::new().serve_connection(io, service);
-                    let mut conn = Pin::new(&mut conn);
+                    let builder = auto::Builder::new(TokioExecutor::new());
+                    let conn = builder.serve_connection_with_upgrades(io, service);
+                    tokio::pin!(conn);
 
                     tokio::select! {
                         result = &mut conn => {
                             if let Err(err) = result {
-                                if !err.is_incomplete_message() {
+                                let err_string = err.to_string();
+                                if !err_string.contains("incomplete") {
                                     eprintln!("connection error: {err}");
                                 }
                             }
@@ -118,7 +120,8 @@ pub(crate) async fn serve(
                         _ = rx.changed() => {
                             conn.as_mut().graceful_shutdown();
                             if let Err(err) = conn.await {
-                                if !err.is_incomplete_message() {
+                                let err_string = err.to_string();
+                                if !err_string.contains("incomplete") {
                                     eprintln!("connection error during drain: {err}");
                                 }
                             }

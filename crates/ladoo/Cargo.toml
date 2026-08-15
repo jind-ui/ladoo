@@ -26,8 +26,8 @@ bytes = "1"
 dashmap = "6"
 http = "1"
 http-body-util = "0.1"
-hyper = { version = "1", features = ["server", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1"] }
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1", "http2"] }
 jsonwebtoken = { version = "9", optional = true }
 ladoo-macros = { path = "../ladoo-macros", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
@@ -45,6 +45,11 @@ uuid = { version = "1", features = ["v4"], optional = true }
 validator = { version = "0.19", features = ["derive"], optional = true }
 
 [dev-dependencies]
+# Enables `test-server` for this crate's own integration tests (e.g.
+# `tests/http2_test.rs`), which need a real TCP server (`App::spawn`)
+# to exercise HTTP/2 over the wire — the in-memory `TestClient` can't
+# negotiate a wire protocol.
+ladoo = { path = ".", features = ["test-server"] }
 jsonwebtoken = "9"
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }

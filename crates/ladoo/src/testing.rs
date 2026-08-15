@@ -323,6 +323,15 @@ impl TestServer {
         }
     }
 
+    /// Build the full URL for `path` against this server's base address.
+    ///
+    /// Useful when a test needs a raw URL string — e.g. to hand to a
+    /// custom `reqwest::Client` — rather than going through the
+    /// [`ServerTestRequest`] builder.
+    pub fn url(&self, path: &str) -> String {
+        format!("{}{}", self.base_url, path)
+    }
+
     /// Start building a request with an arbitrary HTTP method.
     pub fn request(&self, method: Method, path: &str) -> ServerTestRequest<'_> {
         ServerTestRequest::new(self, method, path)
