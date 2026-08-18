@@ -114,6 +114,58 @@ mod tests {
     }
 
     #[test]
+    fn allowed_methods_returns_methods_for_matching_path() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/users", dummy_handler());
+        router.add(Method::POST, "/users", dummy_handler());
+        router.add(Method::DELETE, "/users", dummy_handler());
+
+        let methods = router.allowed_methods_for_path("/users");
+        assert_eq!(methods, vec![Method::DELETE, Method::GET, Method::POST]);
+    }
+
+    #[test]
+    fn allowed_methods_returns_empty_for_unknown_path() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/users", dummy_handler());
+
+        let methods = router.allowed_methods_for_path("/nonexistent");
+        assert!(methods.is_empty());
+    }
+
+    #[test]
+    fn allowed_methods_works_with_param_routes() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/users/:id", dummy_handler());
+        router.add(Method::PUT, "/users/:id", dummy_handler());
+
+        let methods = router.allowed_methods_for_path("/users/42");
+        assert_eq!(methods, vec![Method::GET, Method::PUT]);
+    }
+
+    #[test]
+    fn allowed_methods_works_with_wildcard_routes() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/files/*path", dummy_handler());
+        router.add(Method::DELETE, "/files/*path", dummy_handler());
+
+        let methods = router.allowed_methods_for_path("/files/docs/readme.md");
+        assert_eq!(methods, vec![Method::DELETE, Method::GET]);
+    }
+
+    #[test]
+    fn allowed_methods_deduplicates() {
+        let mut router = Router::new();
+        router.add(Method::GET, "/items/:id", dummy_handler());
+        router.add(Method::GET, "/items/special", dummy_handler());
+        router.add(Method::POST, "/items/:id", dummy_handler());
+
+        // Both GET routes match /items/special, but GET should appear once
+        let methods = router.allowed_methods_for_path("/items/special");
+        assert_eq!(methods, vec![Method::GET, Method::POST]);
+    }
+
+    #[test]
     fn find_static_before_param() {
         let mut router = Router::new();
         router.add(Method::GET, "/users/me", dummy_handler());
@@ -512,6 +564,24 @@ impl Router {
             .iter()
             .find(|route| Self::match_segments(&route.segments, &path_segments).is_some())
             .map(|route| route.middleware.as_slice())
+    }
+
+    /// Returns every HTTP method registered for routes whose path pattern
+    /// matches `path`, sorted alphabetically and deduplicated.
+    ///
+    /// Returns an empty `Vec` when no route matches the path at all —
+    /// callers use this to distinguish 405 (non-empty) from 404 (empty).
+    pub(crate) fn allowed_methods_for_path(&self, path: &str) -> Vec<Method> {
+        let path_segments = Self::split_path(path);
+        let mut methods: Vec<Method> = self
+            .routes
+            .iter()
+            .filter(|route| Self::match_segments(&route.segments, &path_segments).is_some())
+            .map(|route| route.method.clone())
+            .collect();
+        methods.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        methods.dedup();
+        methods
     }
 
     /// Parse a path pattern like `/users/:id` or `/assets/*path` into segments.

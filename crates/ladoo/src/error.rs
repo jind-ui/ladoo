@@ -94,6 +94,11 @@ impl Error {
         Self::new(StatusCode::TOO_MANY_REQUESTS, message)
     }
 
+    /// Create a 405 Method Not Allowed error.
+    pub fn method_not_allowed(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::METHOD_NOT_ALLOWED, message)
+    }
+
     /// Attach a dev-only detail string to this error.
     ///
     /// The detail is intended for logging or dev-mode responses, not for
@@ -383,6 +388,13 @@ pub(crate) mod tests {
         let err = Error::too_many_requests("slow down");
         assert_eq!(err.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(err.message(), "slow down");
+    }
+
+    #[test]
+    fn method_not_allowed_creates_405() {
+        let err = Error::method_not_allowed("Use GET");
+        assert_eq!(err.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(err.message(), "Use GET");
     }
 
     #[test]

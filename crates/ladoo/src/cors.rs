@@ -661,13 +661,15 @@ mod tests {
         );
 
         // A path outside the group has no CORS middleware, so its
-        // preflight is a genuine 404 (no route registers it at all).
+        // preflight isn't intercepted. The path is registered for GET,
+        // just not for OPTIONS, so it falls through to a 405 (not a 404).
         let page_preflight_resp = client
             .request(Method::OPTIONS, "/page")
             .header("origin", "https://example.com")
             .header("access-control-request-method", "GET")
             .send()
             .await;
-        assert_eq!(page_preflight_resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(page_preflight_resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(page_preflight_resp.header("allow"), Some("GET"));
     }
 }

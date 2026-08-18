@@ -331,45 +331,60 @@ pub(crate) async fn handle_app_request(
         };
     }
 
-    match router.find_middleware_for_path(&path) {
-        Some(route_middleware) => {
-            // The path is registered, just not for this method (e.g. a
-            // preflight `OPTIONS` request for a path that only registers
-            // `GET`). Global middleware *and* the route's own (e.g.
-            // group-scoped) middleware still run, so middleware like
-            // `Cors` can intercept it regardless of whether it was
-            // registered globally or on a `.group(...)`; if nothing
-            // short-circuits, the fallback handler below produces the
-            // usual 404.
-            use crate::handler::IntoHandler;
-            let not_found_handler: Arc<dyn crate::handler::Handler> =
-                (|_req: Request| crate::error::Error::not_found("Not Found"))
-                    .into_handler()
-                    .into();
+    let allowed = router.allowed_methods_for_path(&path);
+    if !allowed.is_empty() {
+        // The path is registered, just not for this method (e.g. a
+        // preflight `OPTIONS` request for a path that only registers
+        // `GET`). Global middleware *and* the route's own (e.g.
+        // group-scoped) middleware still run, so middleware like
+        // `Cors` can intercept it regardless of whether it was
+        // registered globally or on a `.group(...)`; if nothing
+        // short-circuits, the fallback handler below produces a 405
+        // with an `Allow` header listing the methods that are handled.
+        let route_middleware = router
+            .find_middleware_for_path(&path)
+            .unwrap_or(&[]);
 
-            let mut all_middleware: Vec<Arc<dyn Middleware>> = Vec::new();
-            all_middleware.extend_from_slice(global_middleware);
-            all_middleware.extend_from_slice(route_middleware);
+        let allow_value = allowed
+            .iter()
+            .map(|m| m.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
 
-            let ctx = crate::context::Context::new(request);
-            let result =
-                crate::middleware::run_middleware_chain(&all_middleware, not_found_handler, ctx)
-                    .await;
+        use crate::handler::IntoHandler;
+        let method_not_allowed_handler: Arc<dyn crate::handler::Handler> =
+            (move |_req: Request| {
+                use crate::response::IntoResponse;
+                let mut resp = crate::error::Error::method_not_allowed("Method Not Allowed")
+                    .into_response();
+                resp.set_header("allow", &allow_value);
+                resp
+            })
+                .into_handler()
+                .into();
 
-            match result {
-                Ok(response) => response,
-                Err(err) => {
-                    use crate::response::IntoResponse;
-                    err.into_response()
-                }
+        let mut all_middleware: Vec<Arc<dyn Middleware>> = Vec::new();
+        all_middleware.extend_from_slice(global_middleware);
+        all_middleware.extend_from_slice(route_middleware);
+
+        let ctx = crate::context::Context::new(request);
+        let result = crate::middleware::run_middleware_chain(
+            &all_middleware,
+            method_not_allowed_handler,
+            ctx,
+        )
+        .await;
+
+        match result {
+            Ok(response) => response,
+            Err(err) => {
+                use crate::response::IntoResponse;
+                err.into_response()
             }
         }
-        None => {
-            // Genuinely unknown path — skip middleware entirely and
-            // return a plain 404, matching existing behavior.
-            use crate::response::IntoResponse;
-            crate::error::Error::not_found("Not Found").into_response()
-        }
+    } else {
+        use crate::response::IntoResponse;
+        crate::error::Error::not_found("Not Found").into_response()
     }
 }
 
@@ -689,13 +704,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returns_404_for_wrong_method() {
+    async fn returns_405_for_wrong_method() {
         let app = App::new().get("/users", |_req: crate::request::Request| "users");
         let (url, handle) = start_test_server(app).await;
 
         let client = reqwest::Client::new();
         let resp = client.post(format!("{url}/users")).send().await.unwrap();
+        assert_eq!(resp.status(), 405);
+        assert_eq!(resp.headers().get("allow").unwrap(), "GET");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn returns_405_with_all_methods_in_allow_header() {
+        let app = App::new()
+            .get("/items", |_req: crate::request::Request| "list")
+            .post("/items", |_req: crate::request::Request| "create")
+            .delete("/items", |_req: crate::request::Request| "delete");
+        let (url, handle) = start_test_server(app).await;
+
+        let client = reqwest::Client::new();
+        let resp = client.put(format!("{url}/items")).send().await.unwrap();
+        assert_eq!(resp.status(), 405);
+        assert_eq!(
+            resp.headers().get("allow").unwrap(),
+            "DELETE, GET, POST"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn returns_404_for_genuinely_unknown_path() {
+        let app = App::new().get("/known", |_req: crate::request::Request| "ok");
+        let (url, handle) = start_test_server(app).await;
+
+        let resp = reqwest::get(format!("{url}/unknown")).await.unwrap();
         assert_eq!(resp.status(), 404);
+        assert!(resp.headers().get("allow").is_none());
 
         handle.abort();
     }
