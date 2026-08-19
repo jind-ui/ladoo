@@ -20,11 +20,12 @@ pub struct JobContext {
 impl JobContext {
     /// Pull a dependency from the DI container.
     ///
-    /// Returns the value registered with `App::provide::<T>()`.
+    /// Returns the value registered with `App::provide::<T>()`, shared
+    /// behind an `Arc`.
     /// Fails with [`JobError::MissingState`] if `T` was not provided.
-    pub fn state<T: Send + Sync + 'static>(&self) -> Result<&T, JobError> {
+    pub fn state<T: Send + Sync + 'static>(&self) -> Result<Arc<T>, JobError> {
         self.state
-            .get::<T>()
+            .get_shared::<T>()
             .ok_or_else(|| JobError::MissingState(std::any::type_name::<T>().to_string()))
     }
 
@@ -46,7 +47,7 @@ mod tests {
     #[test]
     fn state_returns_provided_type() {
         let mut map = TypeMap::new();
-        map.insert(42_u32);
+        map.insert_shared(42_u32);
         let ctx = JobContext {
             state: Arc::new(map),
             attempt: 1,

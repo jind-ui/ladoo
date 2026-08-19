@@ -23,6 +23,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use crate::auth::{AuthError, HasRole};
 use crate::context::Context;
@@ -118,12 +119,12 @@ impl Default for Rbac {
 ///         .get("/stats", admin_stats)
 ///     )
 /// ```
-pub struct RequireRole<U: HasRole + Clone + Send + Sync + 'static> {
+pub struct RequireRole<U: HasRole + Send + Sync + 'static> {
     role: String,
     _user: PhantomData<U>,
 }
 
-impl<U: HasRole + Clone + Send + Sync + 'static> RequireRole<U> {
+impl<U: HasRole + Send + Sync + 'static> RequireRole<U> {
     /// Create a role guard requiring the given role.
     pub fn new(role: &str) -> Self {
         Self {
@@ -133,7 +134,7 @@ impl<U: HasRole + Clone + Send + Sync + 'static> RequireRole<U> {
     }
 }
 
-impl<U: HasRole + Clone + Send + Sync + 'static> Middleware for RequireRole<U> {
+impl<U: HasRole + Send + Sync + 'static> Middleware for RequireRole<U> {
     fn call(
         &self,
         ctx: Context,
@@ -141,8 +142,8 @@ impl<U: HasRole + Clone + Send + Sync + 'static> Middleware for RequireRole<U> {
     ) -> Pin<Box<dyn Future<Output = Result<Response, Error>> + Send>> {
         let role = self.role.clone();
         Box::pin(async move {
-            let user = match ctx.request().per_request().get::<U>() {
-                Some(u) => u.clone(),
+            let user: Arc<U> = match ctx.request().per_request().get_shared::<U>() {
+                Some(u) => u,
                 None => return Ok(AuthError::Missing.into_response()),
             };
             if user.roles().iter().any(|r| r == &role) {
@@ -176,12 +177,12 @@ impl<U: HasRole + Clone + Send + Sync + 'static> Middleware for RequireRole<U> {
 ///         .post("/posts", create_post)
 ///     )
 /// ```
-pub struct RequirePermission<U: HasRole + Clone + Send + Sync + 'static> {
+pub struct RequirePermission<U: HasRole + Send + Sync + 'static> {
     permission: String,
     _user: PhantomData<U>,
 }
 
-impl<U: HasRole + Clone + Send + Sync + 'static> RequirePermission<U> {
+impl<U: HasRole + Send + Sync + 'static> RequirePermission<U> {
     /// Create a permission guard requiring the given permission.
     pub fn new(permission: &str) -> Self {
         Self {
@@ -191,7 +192,7 @@ impl<U: HasRole + Clone + Send + Sync + 'static> RequirePermission<U> {
     }
 }
 
-impl<U: HasRole + Clone + Send + Sync + 'static> Middleware for RequirePermission<U> {
+impl<U: HasRole + Send + Sync + 'static> Middleware for RequirePermission<U> {
     fn call(
         &self,
         ctx: Context,
@@ -199,13 +200,13 @@ impl<U: HasRole + Clone + Send + Sync + 'static> Middleware for RequirePermissio
     ) -> Pin<Box<dyn Future<Output = Result<Response, Error>> + Send>> {
         let permission = self.permission.clone();
         Box::pin(async move {
-            let user = match ctx.request().per_request().get::<U>() {
-                Some(u) => u.clone(),
+            let user: Arc<U> = match ctx.request().per_request().get_shared::<U>() {
+                Some(u) => u,
                 None => return Ok(AuthError::Missing.into_response()),
             };
 
             let has_perm = {
-                let rbac = match ctx.request().extensions().get::<Rbac>() {
+                let rbac: Arc<Rbac> = match ctx.request().extensions().get_shared::<Rbac>() {
                     Some(rbac) => rbac,
                     None => {
                         return Ok(Error::internal(

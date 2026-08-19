@@ -269,8 +269,8 @@ impl Default for HealthConfig {
 /// Runs all registered checks concurrently, determines overall status,
 /// and returns a JSON response (or empty body if `detailed` is false).
 pub(crate) async fn health_handler(
-    registry: State<Arc<HealthRegistry>>,
-    config: State<Arc<HealthConfig>>,
+    registry: State<HealthRegistry>,
+    config: State<HealthConfig>,
 ) -> Response {
     let results = registry.run_checks(config.check_timeout).await;
 
@@ -524,18 +524,18 @@ mod tests {
         assert_eq!((config.meta_fns[0].1)(), "42");
     }
 
-    fn make_registry(checks: Vec<Arc<dyn HealthCheckable>>) -> Arc<HealthRegistry> {
-        Arc::new(HealthRegistry {
+    fn make_registry(checks: Vec<Arc<dyn HealthCheckable>>) -> HealthRegistry {
+        HealthRegistry {
             checks,
             closures: Vec::new(),
-        })
+        }
     }
 
     #[tokio::test]
     async fn handler_all_healthy() {
         let registry = make_registry(vec![Arc::new(AlwaysHealthy)]);
-        let config = Arc::new(HealthConfig::new());
-        let resp = health_handler(State(registry), State(config)).await;
+        let config = HealthConfig::new();
+        let resp = health_handler(State::new(registry), State::new(config)).await;
         assert_eq!(resp.status(), http::StatusCode::OK);
         let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert_eq!(body["status"], "healthy");
@@ -544,8 +544,8 @@ mod tests {
     #[tokio::test]
     async fn handler_degraded() {
         let registry = make_registry(vec![Arc::new(AlwaysHealthy), Arc::new(AlwaysSick)]);
-        let config = Arc::new(HealthConfig::new());
-        let resp = health_handler(State(registry), State(config)).await;
+        let config = HealthConfig::new();
+        let resp = health_handler(State::new(registry), State::new(config)).await;
         assert_eq!(resp.status(), http::StatusCode::OK);
         let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert_eq!(body["status"], "degraded");
@@ -554,8 +554,8 @@ mod tests {
     #[tokio::test]
     async fn handler_all_unhealthy() {
         let registry = make_registry(vec![Arc::new(AlwaysSick)]);
-        let config = Arc::new(HealthConfig::new());
-        let resp = health_handler(State(registry), State(config)).await;
+        let config = HealthConfig::new();
+        let resp = health_handler(State::new(registry), State::new(config)).await;
         assert_eq!(resp.status(), http::StatusCode::SERVICE_UNAVAILABLE);
         let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert_eq!(body["status"], "unhealthy");
@@ -564,8 +564,8 @@ mod tests {
     #[tokio::test]
     async fn handler_no_checks_is_healthy() {
         let registry = make_registry(vec![]);
-        let config = Arc::new(HealthConfig::new());
-        let resp = health_handler(State(registry), State(config)).await;
+        let config = HealthConfig::new();
+        let resp = health_handler(State::new(registry), State::new(config)).await;
         assert_eq!(resp.status(), http::StatusCode::OK);
         let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert_eq!(body["status"], "healthy");
@@ -574,8 +574,8 @@ mod tests {
     #[tokio::test]
     async fn handler_not_detailed_returns_empty_body() {
         let registry = make_registry(vec![Arc::new(AlwaysHealthy)]);
-        let config = Arc::new(HealthConfig::new().detailed(false));
-        let resp = health_handler(State(registry), State(config)).await;
+        let config = HealthConfig::new().detailed(false);
+        let resp = health_handler(State::new(registry), State::new(config)).await;
         assert_eq!(resp.status(), http::StatusCode::OK);
         assert!(resp.body_bytes().is_empty());
     }
@@ -583,8 +583,8 @@ mod tests {
     #[tokio::test]
     async fn handler_includes_latency() {
         let registry = make_registry(vec![Arc::new(AlwaysHealthy)]);
-        let config = Arc::new(HealthConfig::new().include_latency(true));
-        let resp = health_handler(State(registry), State(config)).await;
+        let config = HealthConfig::new().include_latency(true);
+        let resp = health_handler(State::new(registry), State::new(config)).await;
         let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         let check = &body["checks"]["always-healthy"];
         assert!(check["latency_ms"].is_number());
@@ -593,12 +593,10 @@ mod tests {
     #[tokio::test]
     async fn handler_includes_meta() {
         let registry = make_registry(vec![]);
-        let config = Arc::new(
-            HealthConfig::new()
-                .meta("version", "1.0")
-                .meta_fn("dynamic", || "computed".into()),
-        );
-        let resp = health_handler(State(registry), State(config)).await;
+        let config = HealthConfig::new()
+            .meta("version", "1.0")
+            .meta_fn("dynamic", || "computed".into());
+        let resp = health_handler(State::new(registry), State::new(config)).await;
         let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert_eq!(body["meta"]["version"], "1.0");
         assert_eq!(body["meta"]["dynamic"], "computed");
@@ -618,8 +616,8 @@ mod tests {
         let _guard = crate::error::tests::lock_env();
         std::env::set_var("LADOO_ENV", "development");
         let registry = make_registry(vec![Arc::new(AlwaysSick)]);
-        let config = Arc::new(HealthConfig::new());
-        let resp = health_handler(State(registry), State(config)).await;
+        let config = HealthConfig::new();
+        let resp = health_handler(State::new(registry), State::new(config)).await;
         let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         let check = &body["checks"]["always-sick"];
         assert_eq!(check["status"], "down");

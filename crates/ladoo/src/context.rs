@@ -18,6 +18,8 @@
 //! assert_eq!(ctx.path(), "/users/42");
 //! ```
 
+use std::sync::Arc;
+
 use http::{HeaderMap, Method, Uri};
 
 use crate::request::Request;
@@ -111,8 +113,8 @@ impl Context {
     /// Only called by the `logging` feature's request logger today; when
     /// that feature is disabled this method has no non-test callers.
     #[cfg_attr(not(feature = "logging"), allow(dead_code))]
-    pub(crate) fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
-        self.request.per_request().get::<T>()
+    pub(crate) fn get<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        self.request.per_request().get_shared::<T>()
     }
 
     /// Returns the client's IP address, if known.
@@ -214,14 +216,14 @@ mod tests {
         let req = Request::test(Method::GET, "/");
         let mut ctx = Context::new(req);
         ctx.provide(42_u32);
-        assert_eq!(ctx.get::<u32>(), Some(&42));
+        assert_eq!(*ctx.get::<u32>().unwrap(), 42);
     }
 
     #[test]
     fn get_returns_none_for_missing() {
         let req = Request::test(Method::GET, "/");
         let ctx = Context::new(req);
-        assert_eq!(ctx.get::<u32>(), None);
+        assert!(ctx.get::<u32>().is_none());
     }
 
     #[test]

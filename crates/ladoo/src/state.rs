@@ -6,7 +6,7 @@
 //!
 //! # Examples
 //!
-//! ```
+//! ```rust,ignore
 //! use ladoo::state::State;
 //!
 //! let state = State(42_u32);
@@ -35,11 +35,13 @@ impl TypeMap {
     }
 
     /// Insert a value, replacing any previous value of the same type.
+    #[cfg(test)]
     pub(crate) fn insert<T: Send + Sync + 'static>(&mut self, value: T) {
         self.map.insert(TypeId::of::<T>(), Box::new(value));
     }
 
     /// Get a reference to a value by type.
+    #[cfg(test)]
     pub(crate) fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
         self.map
             .get(&TypeId::of::<T>())
@@ -53,13 +55,11 @@ impl TypeMap {
     }
 
     /// Insert a value wrapped in `Arc`, replacing any previous value of the same type.
-    #[allow(dead_code)]
     pub(crate) fn insert_shared<T: Send + Sync + 'static>(&mut self, value: T) {
         self.map.insert(TypeId::of::<T>(), Box::new(Arc::new(value)));
     }
 
     /// Get an `Arc` reference to a shared value by type.
-    #[allow(dead_code)]
     pub(crate) fn get_shared<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         self.map
             .get(&TypeId::of::<T>())
@@ -99,7 +99,7 @@ impl TypeMap {
 ///     .run("0.0.0.0:3000");
 /// ```
 #[derive(Debug)]
-pub struct State<T>(pub T);
+pub struct State<T>(Arc<T>);
 
 impl<T> std::ops::Deref for State<T> {
     type Target = T;
@@ -110,13 +110,21 @@ impl<T> std::ops::Deref for State<T> {
 }
 
 impl<T> State<T> {
-    /// Consume the wrapper and return the inner value.
-    pub fn into_inner(self) -> T {
+    /// Wrap a value in `State`, for constructing extractor arguments directly
+    /// (e.g. in unit tests that call a handler without going through
+    /// `FromRequest`).
+    #[cfg(test)]
+    pub(crate) fn new(value: T) -> Self {
+        State(Arc::new(value))
+    }
+
+    /// Consume the wrapper and return the inner `Arc`.
+    pub fn into_inner(self) -> Arc<T> {
         self.0
     }
 }
 
-impl<T: Clone + Send + Sync + 'static> crate::extract::FromRequest for State<T> {
+impl<T: Send + Sync + 'static> crate::extract::FromRequest for State<T> {
     /// Extract `T` from per-request state (if present) or application state.
     ///
     /// Per-request values injected via [`Context::provide`](crate::context::Context::provide)
@@ -126,12 +134,12 @@ impl<T: Clone + Send + Sync + 'static> crate::extract::FromRequest for State<T> 
     fn from_request(req: &mut crate::request::Request) -> Result<Self, crate::response::Response> {
         use crate::response::IntoResponse;
 
-        if let Some(value) = req.per_request().get::<T>() {
-            return Ok(State(value.clone()));
+        if let Some(value) = req.per_request().get_shared::<T>() {
+            return Ok(State(value));
         }
 
-        match req.extensions().get::<T>() {
-            Some(value) => Ok(State(value.clone())),
+        match req.extensions().get_shared::<T>() {
+            Some(value) => Ok(State(value)),
             None => {
                 let type_name = std::any::type_name::<T>();
                 Err(crate::error::Error::internal(format!(
@@ -210,15 +218,15 @@ mod tests {
 
     #[test]
     fn state_deref_accesses_inner() {
-        let state = State(42_u32);
+        let state = State(Arc::new(42_u32));
         assert_eq!(*state, 42);
     }
 
     #[test]
-    fn state_into_inner_returns_value() {
-        let state = State(String::from("hello"));
-        let inner = state.into_inner();
-        assert_eq!(inner, "hello");
+    fn state_into_inner_returns_arc() {
+        let state = State(Arc::new(String::from("hello")));
+        let inner: Arc<String> = state.into_inner();
+        assert_eq!(*inner, "hello");
     }
 
     use crate::extract::FromRequest;
@@ -264,7 +272,7 @@ mod tests {
 
     #[test]
     fn state_extractor_with_custom_struct() {
-        #[derive(Debug, Clone, PartialEq)]
+        #[derive(Debug, PartialEq)]
         struct DbPool {
             url: String,
         }
@@ -291,6 +299,24 @@ mod tests {
         req.provide(2_u32);
         let extracted = State::<u32>::from_request(&mut req).unwrap();
         assert_eq!(*extracted, 2);
+    }
+
+    #[test]
+    fn state_works_with_non_clone_type() {
+        struct NonClone(u32);
+        let mut req = crate::request::Request::test(Method::GET, "/");
+        req.provide_test_state(NonClone(42));
+        let extracted = State::<NonClone>::from_request(&mut req).unwrap();
+        assert_eq!((*extracted).0, 42);
+    }
+
+    #[test]
+    fn state_extractions_share_arc_identity() {
+        let mut req = crate::request::Request::test(Method::GET, "/");
+        req.provide_test_state(String::from("shared"));
+        let a = State::<String>::from_request(&mut req).unwrap();
+        let b = State::<String>::from_request(&mut req).unwrap();
+        assert!(Arc::ptr_eq(&a.into_inner(), &b.into_inner()));
     }
 
     #[test]

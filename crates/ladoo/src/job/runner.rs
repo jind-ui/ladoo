@@ -367,7 +367,7 @@ mod tests {
     #[tokio::test]
     async fn job_accesses_state_via_context() {
         let mut map = TypeMap::new();
-        map.insert(42_u32);
+        map.insert_shared(42_u32);
         let runner = JobRunner::new();
         runner.initialize(Arc::new(map));
 

@@ -120,7 +120,7 @@ mod tests {
         let (_, state, _, _, _, _) = app.into_parts();
         #[cfg(feature = "tls")]
         let (_, state, _, _, _, _, _) = app.into_parts();
-        assert_eq!(state.get::<String>(), Some(&"hi".to_string()));
+        assert_eq!(*state.get_shared::<String>().unwrap(), "hi".to_string());
     }
 
     #[test]

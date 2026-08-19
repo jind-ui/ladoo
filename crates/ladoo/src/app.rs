@@ -120,7 +120,7 @@ impl App {
     ///     .provide(String::from("hello"));
     /// ```
     pub fn provide<T: Send + Sync + 'static>(mut self, value: T) -> Self {
-        self.state.insert(value);
+        self.state.insert_shared(value);
         self
     }
 
@@ -217,7 +217,7 @@ impl App {
         T: crate::health::HealthCheckable + Clone + Send + Sync + 'static,
     {
         let health_clone = value.clone();
-        self.state.insert(value);
+        self.state.insert_shared(value);
         self.health_registry
             .checks
             .push(std::sync::Arc::new(health_clone));
@@ -667,8 +667,8 @@ impl App {
 
         if registry.has_checks() {
             let path = config.path.clone();
-            self.state.insert(Arc::new(registry));
-            self.state.insert(Arc::new(config));
+            self.state.insert_shared(registry);
+            self.state.insert_shared(config);
             self.router.add(
                 http::Method::GET,
                 &path,
@@ -711,8 +711,8 @@ impl App {
 
         if registry.has_checks() {
             let path = config.path.clone();
-            self.state.insert(Arc::new(registry));
-            self.state.insert(Arc::new(config));
+            self.state.insert_shared(registry);
+            self.state.insert_shared(config);
             self.router.add(
                 http::Method::GET,
                 &path,
@@ -924,7 +924,7 @@ impl Default for App {
 #[cfg(feature = "jobs")]
 pub(crate) fn build_and_initialize_state(state: TypeMap) -> Arc<TypeMap> {
     let state = Arc::new(state);
-    if let Some(runner) = state.get::<crate::job::JobRunner>() {
+    if let Some(runner) = state.get_shared::<crate::job::JobRunner>() {
         runner.initialize(state.clone());
     }
     state
@@ -1119,7 +1119,7 @@ mod tests {
         let (router, state, _middleware, _shutdown_timeout, _shutdown_hooks, _body_limit) =
             test_into_parts(app);
         assert!(router.find(&Method::GET, "/").is_some());
-        assert_eq!(state.get::<u32>(), Some(&42));
+        assert_eq!(*state.get_shared::<u32>().unwrap(), 42);
     }
 
     #[cfg(feature = "json")]
@@ -1131,7 +1131,9 @@ mod tests {
                 .max_per_page(50),
         );
         let (_, state, _, _, _, _) = test_into_parts(app);
-        let config = state.get::<crate::pagination::PaginationConfig>().unwrap();
+        let config = state
+            .get_shared::<crate::pagination::PaginationConfig>()
+            .unwrap();
         assert_eq!(config.default_per_page, 25);
         assert_eq!(config.max_per_page, 50);
     }
@@ -1309,7 +1311,7 @@ mod tests {
         fn plugin_registers_state_and_route() {
             let app = App::new().plugin(GreetPlugin);
             let (router, state, _, _, _, _) = test_into_parts(app);
-            assert_eq!(state.get::<String>(), Some(&"hello".to_string()));
+            assert_eq!(*state.get_shared::<String>().unwrap(), "hello".to_string());
             assert!(router.find(&Method::GET, "/greet").is_some());
         }
 
@@ -1331,7 +1333,7 @@ mod tests {
                 .plugin(DuplicatePlugin(1))
                 .plugin(DuplicatePlugin(2));
             let (_, state, _, _, _, _) = test_into_parts(app);
-            assert_eq!(state.get::<u32>(), Some(&1));
+            assert_eq!(*state.get_shared::<u32>().unwrap(), 1);
         }
 
         struct SubPluginParent;
@@ -1361,7 +1363,7 @@ mod tests {
         fn sub_plugin_registers_via_parent() {
             let app = App::new().plugin(SubPluginParent);
             let (_, state, _, _, _, _) = test_into_parts(app);
-            assert_eq!(state.get::<u32>(), Some(&99));
+            assert_eq!(*state.get_shared::<u32>().unwrap(), 99);
         }
 
         #[test]
@@ -1398,7 +1400,7 @@ mod tests {
         fn provide_healthy_stores_state_and_registry() {
             let app = App::new().provide_healthy(MockDb);
             let (_, state, _, _, _, _) = test_into_parts(app);
-            assert!(state.get::<MockDb>().is_some());
+            assert!(state.get_shared::<MockDb>().is_some());
         }
 
         #[test]
@@ -1456,7 +1458,7 @@ mod tests {
         fn config_provides_as_state() {
             let app = App::new().config::<TestConfig>();
             let (_, state, _, _, _, _) = test_into_parts(app);
-            assert_eq!(state.get::<TestConfig>().unwrap().port, 9090);
+            assert_eq!(state.get_shared::<TestConfig>().unwrap().port, 9090);
         }
 
         struct FailConfig;
@@ -1482,7 +1484,7 @@ mod tests {
                 .get("/", |_req: Request| "hello");
             let (router, state, _, _, _, _) = test_into_parts(app);
             assert!(router.find(&Method::GET, "/").is_some());
-            assert_eq!(state.get::<TestConfig>().unwrap().port, 9090);
+            assert_eq!(state.get_shared::<TestConfig>().unwrap().port, 9090);
         }
     }
 }

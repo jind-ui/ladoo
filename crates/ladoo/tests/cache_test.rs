@@ -109,11 +109,11 @@ async fn per_api_caches_with_newtypes() {
             Cache::new(MemoryStore::new()).default_ttl(Duration::from_secs(3600)),
         ))
         .get("/user", |cache: State<UserCache>| async move {
-            cache.0 .0.set("user:1", &"Alice", None).await.unwrap();
+            cache.0.set("user:1", &"Alice", None).await.unwrap();
             "ok"
         })
         .get("/config", |cache: State<ConfigCache>| async move {
-            let user_val: Option<String> = cache.0 .0.get("user:1").await.unwrap();
+            let user_val: Option<String> = cache.0.get("user:1").await.unwrap();
             match user_val {
                 Some(_) => "leaked",
                 None => "isolated",

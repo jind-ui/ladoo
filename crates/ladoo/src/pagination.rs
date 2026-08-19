@@ -178,7 +178,7 @@ impl FromRequest for Paginate {
         // constructed directly (its fields are public, bypassing the
         // builder's own clamp) — `u64::clamp(1, max)` panics if `max < 1`.
         let (default_per_page, max_per_page) =
-            if let Some(config) = req.extensions().get::<PaginationConfig>() {
+            if let Some(config) = req.extensions().get_shared::<PaginationConfig>() {
                 (config.default_per_page, config.max_per_page.max(1))
             } else {
                 (DEFAULT_PER_PAGE, DEFAULT_MAX_PER_PAGE)
@@ -306,7 +306,7 @@ impl FromRequest for CursorParams {
         // See the matching comment in `Paginate::from_request` — `.max(1)`
         // prevents a panic in `u64::clamp` if `max_per_page` is 0.
         let (default_per_page, max_per_page) =
-            if let Some(config) = req.extensions().get::<PaginationConfig>() {
+            if let Some(config) = req.extensions().get_shared::<PaginationConfig>() {
                 (config.default_per_page, config.max_per_page.max(1))
             } else {
                 (DEFAULT_PER_PAGE, DEFAULT_MAX_PER_PAGE)

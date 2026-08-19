@@ -132,7 +132,7 @@ impl IntoResponse for AuthError {
 /// }
 /// ```
 #[derive(Debug)]
-pub struct Auth<T>(pub T);
+pub struct Auth<T>(Arc<T>);
 
 impl<T> Deref for Auth<T> {
     type Target = T;
@@ -141,18 +141,25 @@ impl<T> Deref for Auth<T> {
     }
 }
 
-impl<T: Clone + Send + Sync + 'static> FromRequest for Auth<T> {
+impl<T> Auth<T> {
+    /// Consume the wrapper and return the inner `Arc`.
+    pub fn into_inner(self) -> Arc<T> {
+        self.0
+    }
+}
+
+impl<T: Send + Sync + 'static> FromRequest for Auth<T> {
     fn from_request(req: &mut Request) -> Result<Self, Response> {
-        match req.per_request().get::<T>() {
-            Some(user) => Ok(Auth(user.clone())),
+        match req.per_request().get_shared::<T>() {
+            Some(user) => Ok(Auth(user)),
             None => Err(Error::unauthorized("Authentication required").into_response()),
         }
     }
 }
 
-impl<T: Clone + Send + Sync + 'static> FromRequest for Option<Auth<T>> {
+impl<T: Send + Sync + 'static> FromRequest for Option<Auth<T>> {
     fn from_request(req: &mut Request) -> Result<Self, Response> {
-        Ok(req.per_request().get::<T>().map(|u| Auth(u.clone())))
+        Ok(req.per_request().get_shared::<T>().map(Auth))
     }
 }
 
@@ -186,7 +193,7 @@ impl<T: Clone + Send + Sync + 'static> FromRequest for Option<Auth<T>> {
 #[async_trait]
 pub trait AuthProvider: Send + Sync + 'static {
     /// The user type this provider authenticates to.
-    type User: Clone + Send + Sync + 'static;
+    type User: Send + Sync + 'static;
 
     /// Validate credentials from the request and return the authenticated user.
     async fn authenticate(&self, req: &Request) -> Result<Self::User, AuthError>;
@@ -339,7 +346,7 @@ mod tests {
 
     #[test]
     fn auth_deref_to_inner() {
-        let auth = Auth("hello".to_string());
+        let auth = Auth(Arc::new("hello".to_string()));
         let s: &String = &auth;
         assert_eq!(s, "hello");
     }
@@ -358,7 +365,7 @@ mod tests {
         let mut req = Request::test(Method::GET, "/");
         req.provide(42_u32);
         let opt = Option::<Auth<u32>>::from_request(&mut req).unwrap();
-        assert_eq!(opt.unwrap().0, 42);
+        assert_eq!(*opt.unwrap(), 42);
     }
 
     #[test]

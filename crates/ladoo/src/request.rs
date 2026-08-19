@@ -283,7 +283,7 @@ impl Request {
     /// Used by framework middleware to inject request-scoped values
     /// (like `RequestId`) that handlers can extract via `State<T>`.
     pub(crate) fn provide<T: Send + Sync + 'static>(&mut self, value: T) {
-        self.per_request.insert(value);
+        self.per_request.insert_shared(value);
     }
 
     /// Returns the per-request state map.
@@ -319,7 +319,7 @@ impl Request {
     pub fn provide_test_state<T: Send + Sync + 'static>(&mut self, value: T) {
         Arc::get_mut(&mut self.extensions)
             .expect("provide_test_state: request state is shared, cannot mutate")
-            .insert(value);
+            .insert_shared(value);
     }
 
     /// Returns the client's IP address, if known.
@@ -450,14 +450,14 @@ mod tests {
     #[test]
     fn test_request_has_empty_extensions() {
         let req = Request::test(Method::GET, "/");
-        assert!(!req.extensions().contains::<u32>());
+        assert!(!req.extensions().contains_shared::<u32>());
     }
 
     #[test]
     fn provide_test_state_makes_value_visible_in_extensions() {
         let mut req = Request::test(Method::GET, "/");
         req.provide_test_state(42_u32);
-        assert_eq!(req.extensions().get::<u32>(), Some(&42));
+        assert_eq!(*req.extensions().get_shared::<u32>().unwrap(), 42);
     }
 
     #[test]
@@ -465,8 +465,11 @@ mod tests {
         let mut req = Request::test(Method::GET, "/");
         req.provide_test_state(42_u32);
         req.provide_test_state(String::from("hello"));
-        assert_eq!(req.extensions().get::<u32>(), Some(&42));
-        assert_eq!(req.extensions().get::<String>(), Some(&String::from("hello")));
+        assert_eq!(*req.extensions().get_shared::<u32>().unwrap(), 42);
+        assert_eq!(
+            *req.extensions().get_shared::<String>().unwrap(),
+            String::from("hello")
+        );
     }
 
     #[test]
