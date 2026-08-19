@@ -6,10 +6,11 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
+//! ```
 //! use ladoo::state::State;
+//! use std::sync::Arc;
 //!
-//! let state = State(42_u32);
+//! let state = State::new(42_u32);
 //! assert_eq!(*state, 42);
 //! ```
 
@@ -110,12 +111,13 @@ impl<T> std::ops::Deref for State<T> {
 }
 
 impl<T> State<T> {
-    /// Wrap a value in `State`, for constructing extractor arguments directly
-    /// (e.g. in unit tests that call a handler without going through
-    /// `FromRequest`).
-    #[cfg(test)]
-    pub(crate) fn new(value: T) -> Self {
-        State(Arc::new(value))
+    /// Wrap a value in `State` for testing.
+    ///
+    /// Production code should use `App::provide` to register state and
+    /// extract it via handler arguments — this constructor is primarily
+    /// for unit tests.
+    pub fn new(value: T) -> Self {
+        Self(Arc::new(value))
     }
 
     /// Consume the wrapper and return the inner `Arc`.

@@ -22,7 +22,7 @@
 //! 1. **Middleware phase (async):** [`AuthProvider::authenticate`] runs
 //!    in middleware, storing the user via `ctx.provide(user)`.
 //! 2. **Extractor phase (sync):** `Auth<T>`'s [`FromRequest`] impl does a
-//!    per-request state lookup — zero-cost beyond the HashMap get.
+//!    per-request state lookup — cheap `Arc::clone` beyond the `HashMap` get.
 //!
 //! An [`AuthProvider`] is wrapped in guard middleware and registered with
 //! [`.guard()`](crate::router::Router::guard) (sugar over
