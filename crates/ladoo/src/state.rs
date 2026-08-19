@@ -8,7 +8,6 @@
 //!
 //! ```
 //! use ladoo::state::State;
-//! use std::sync::Arc;
 //!
 //! let state = State::new(42_u32);
 //! assert_eq!(*state, 42);
