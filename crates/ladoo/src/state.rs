@@ -15,6 +15,7 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// A type-keyed map for storing application state.
 ///
@@ -49,6 +50,30 @@ impl TypeMap {
     #[cfg(test)]
     pub(crate) fn contains<T: Send + Sync + 'static>(&self) -> bool {
         self.map.contains_key(&TypeId::of::<T>())
+    }
+
+    /// Insert a value wrapped in `Arc`, replacing any previous value of the same type.
+    #[allow(dead_code)]
+    pub(crate) fn insert_shared<T: Send + Sync + 'static>(&mut self, value: T) {
+        self.map.insert(TypeId::of::<T>(), Box::new(Arc::new(value)));
+    }
+
+    /// Get an `Arc` reference to a shared value by type.
+    #[allow(dead_code)]
+    pub(crate) fn get_shared<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        self.map
+            .get(&TypeId::of::<T>())
+            .and_then(|boxed| boxed.downcast_ref::<Arc<T>>())
+            .cloned()
+    }
+
+    /// Check whether a shared value of the given type is stored.
+    #[cfg(test)]
+    pub(crate) fn contains_shared<T: Send + Sync + 'static>(&self) -> bool {
+        self.map
+            .get(&TypeId::of::<T>())
+            .and_then(|boxed| boxed.downcast_ref::<Arc<T>>())
+            .is_some()
     }
 }
 
@@ -266,5 +291,56 @@ mod tests {
         req.provide(2_u32);
         let extracted = State::<u32>::from_request(&mut req).unwrap();
         assert_eq!(*extracted, 2);
+    }
+
+    #[test]
+    fn insert_shared_and_get_shared_round_trip() {
+        let mut map = TypeMap::new();
+        map.insert_shared(42_u32);
+        let val = map.get_shared::<u32>().unwrap();
+        assert_eq!(*val, 42);
+    }
+
+    #[test]
+    fn get_shared_returns_none_for_missing_type() {
+        let map = TypeMap::new();
+        assert!(map.get_shared::<u32>().is_none());
+    }
+
+    #[test]
+    fn insert_shared_replaces_existing() {
+        let mut map = TypeMap::new();
+        map.insert_shared(1_u32);
+        map.insert_shared(2_u32);
+        assert_eq!(*map.get_shared::<u32>().unwrap(), 2);
+    }
+
+    #[test]
+    fn get_shared_returns_arc_with_pointer_identity() {
+        let mut map = TypeMap::new();
+        map.insert_shared(String::from("hello"));
+        let a = map.get_shared::<String>().unwrap();
+        let b = map.get_shared::<String>().unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn insert_and_insert_shared_use_same_key() {
+        let mut map = TypeMap::new();
+        map.insert(42_u32);
+        assert!(map.get::<u32>().is_some());
+        assert!(map.get_shared::<u32>().is_none());
+
+        map.insert_shared(99_u32);
+        assert!(map.get::<u32>().is_none());
+        assert_eq!(*map.get_shared::<u32>().unwrap(), 99);
+    }
+
+    #[test]
+    fn contains_shared_works() {
+        let mut map = TypeMap::new();
+        assert!(!map.contains_shared::<u32>());
+        map.insert_shared(42_u32);
+        assert!(map.contains_shared::<u32>());
     }
 }
