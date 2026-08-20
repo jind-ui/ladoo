@@ -9,22 +9,27 @@ keywords = ["web", "framework", "http", "server", "async"]
 categories = ["web-programming::http-server"]
 
 [features]
-default = ["json", "macros", "config", "logging", "cache", "jobs"]
+default = ["json", "macros", "config", "logging", "cache", "jobs",
+           "auth", "cors", "rate-limit", "secure-headers", "validation"]
 json = ["dep:serde", "dep:serde_urlencoded"]
-logging = ["dep:tracing", "dep:tracing-subscriber", "dep:uuid"]
-macros = ["dep:ladoo-macros"]
-test-server = ["dep:reqwest"]
+auth = ["dep:subtle"]
+auth-jwt = ["auth", "dep:jsonwebtoken", "dep:serde"]
+cors = []
+rate-limit = ["dep:dashmap"]
+secure-headers = []
 config = ["dep:toml"]
-validation = ["dep:validator"]
-auth-jwt = ["dep:jsonwebtoken", "dep:serde"]
-cache = ["dep:serde"]
+logging = ["dep:tracing", "dep:tracing-subscriber", "dep:uuid"]
+cache = ["dep:serde", "dep:dashmap"]
 jobs = []
+macros = ["dep:ladoo-macros"]
+validation = ["dep:validator"]
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rustls-pki-types"]
+test-server = ["dep:reqwest"]
 
 [dependencies]
 async-trait = "0.1"
 bytes = "1"
-dashmap = "6"
+dashmap = { version = "6", optional = true }
 http = "1"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["server", "http1", "http2"] }
@@ -40,7 +45,7 @@ reqwest = { version = "0.12", features = ["json"], optional = true }
 rustls = { version = "0.23", optional = true }
 rustls-pemfile = { version = "2", optional = true }
 rustls-pki-types = { version = "1", optional = true }
-subtle = "2"
+subtle = { version = "2", optional = true }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net"] }
 tokio-rustls = { version = "0.26", optional = true }
 toml = { version = "0.8", optional = true }

@@ -460,11 +460,13 @@
 //! ```
 
 pub mod app;
+#[cfg(feature = "auth")]
 pub mod auth;
 #[cfg(feature = "cache")]
 pub mod cache;
 pub mod config;
 pub mod context;
+#[cfg(feature = "cors")]
 pub mod cors;
 pub mod error;
 pub mod extract;
@@ -479,10 +481,12 @@ pub mod middleware;
 pub mod pagination;
 pub mod plugin;
 pub mod prelude;
+#[cfg(feature = "rate-limit")]
 pub mod rate_limit;
 pub mod request;
 pub mod response;
 pub mod router;
+#[cfg(feature = "secure-headers")]
 pub mod secure_headers;
 pub(crate) mod shutdown;
 pub mod state;
