@@ -76,7 +76,7 @@ Cargo Workspace
 ├── crates/ladoo-macros   — derive macros (Config, AppError, Job)
 ├── crates/ladoo-cli      — CLI tool (placeholder)
 ├── crates/ladoo-migrate  — standalone migration tool (~10k LOC)
-└── examples/hello-world  — minimal example
+└── examples/             — minimal example (runs with --no-default-features)
 ```
 
 Key decisions:
@@ -112,12 +112,13 @@ Key decisions:
 | 20 | Job Queue Mode 1 (`Job` trait, `#[derive(Job)]`, `JobRunner`) | ~30 |
 | 21 | HTTP/2 & TLS (h2c auto-detection, feature-gated rustls) | 12 |
 | 22 | 405 Method Not Allowed (with `Allow` header) | 14 |
+| 23 | State<T> Arc Optimization (drop `Clone` bound, `Arc<T>` storage) | ~10 |
+| 24 | Core Feature Isolation (feature-gate optional modules, minimal core) | — |
 
-**Total: ~700+ tests across the workspace**
+**Total: ~790 tests across the workspace**
 
 ### Planned
 
-- **Arc state optimization** — store `Arc<T>` in TypeMap, drop `Clone` bound from `State<T>` and `Auth<T>` (in progress)
 - **Radix router** — replace linear route matching with a radix tree for O(path-length) lookups
 - **Middleware chain reuse** — build the chain once at startup instead of allocating per-request
 - **Body streaming** — opt-in streaming for large uploads (body limit is already in place)
@@ -130,17 +131,24 @@ Key decisions:
 
 ## Feature Flags
 
+All optional features are on by default. Use `default-features = false` to start with a minimal HTTP core (router, handlers, extractors, state, middleware, errors, health, plugins, testing), then add only what you need.
+
 | Flag | Default | What it enables |
 |------|---------|----------------|
 | `json` | on | `Json<T>`, `Query<T>`, `Path<T>` extractors, pagination |
+| `auth` | on | `Auth<T>` extractor, `AuthProvider`, `ApiKeyAuth`, RBAC |
+| `cors` | on | `Cors` middleware with preflight handling |
+| `rate-limit` | on | `RateLimit` middleware, `MemoryStore`, tiered limits |
+| `secure-headers` | on | `SecureHeaders` middleware (HSTS, CSP, etc.) |
 | `macros` | on | `#[derive(Config)]`, `#[derive(AppError)]`, `#[derive(Job)]` |
 | `config` | on | TOML configuration loading |
 | `logging` | on | Structured logging with tracing |
-| `cache` | off | `Cache<T>` wrapper and `CacheStore` trait |
-| `jobs` | off | `Job` trait, `JobRunner`, `#[derive(Job)]` |
+| `cache` | on | `Cache<T>` wrapper and `CacheStore` trait |
+| `jobs` | on | `Job` trait, `JobRunner`, `#[derive(Job)]` |
+| `validation` | on | `validator` crate blanket impl for `Validate` |
 | `auth-jwt` | off | `JwtAuth` provider (adds `jsonwebtoken` dependency) |
-| `validation` | off | `validator` crate blanket impl for `Validate` |
 | `tls` | off | HTTPS via rustls with ALPN HTTP/2 negotiation |
+| `test-server` | off | `TestServer` for real TCP integration tests |
 
 ## License
 
