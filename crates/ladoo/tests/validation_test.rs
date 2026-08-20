@@ -1,7 +1,7 @@
 //! Integration tests for `Valid<T>` exercised through the public `App` and
 //! `TestClient` API, the way a real user would validate a handler input.
 
-#![cfg(feature = "validation")]
+#![cfg(all(feature = "validation", feature = "json"))]
 
 use ladoo::prelude::*;
 use serde::Deserialize;

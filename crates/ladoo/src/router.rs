@@ -548,7 +548,7 @@ impl Router {
     ///
     /// Used to distinguish "path exists but method isn't handled" (e.g. a
     /// preflight `OPTIONS` request for a path that only registers `GET`)
-    /// from a genuinely unknown path. Middleware such as [`Cors`](crate::cors::Cors)
+    /// from a genuinely unknown path. Middleware such as CORS
     /// needs to run in the former case even though no route matched — including
     /// group-scoped middleware merged in via [`Router::merge_from`], which a
     /// plain existence check would miss — but truly unmatched paths should
