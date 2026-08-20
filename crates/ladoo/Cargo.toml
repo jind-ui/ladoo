@@ -26,6 +26,10 @@ validation = ["dep:validator"]
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rustls-pki-types"]
 test-server = ["dep:reqwest"]
 
+[[example]]
+name = "minimal"
+path = "../../examples/minimal.rs"
+
 [dependencies]
 async-trait = "0.1"
 bytes = "1"
