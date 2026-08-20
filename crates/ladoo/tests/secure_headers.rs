@@ -1,3 +1,5 @@
+#![cfg(feature = "secure-headers")]
+
 use ladoo::prelude::*;
 
 #[tokio::test]

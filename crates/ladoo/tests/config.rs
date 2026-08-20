@@ -1,5 +1,7 @@
 //! Integration tests for #[derive(Config)].
 
+#![cfg(feature = "config")]
+
 use std::sync::Mutex;
 
 use ladoo::config::{Config, ConfigError};

@@ -36,6 +36,7 @@ async fn wrong_method_on_param_route_returns_405() {
     assert_eq!(resp.header("allow"), Some("GET, PUT"));
 }
 
+#[cfg(feature = "cors")]
 #[tokio::test]
 async fn cors_preflight_still_works_with_405_fallback() {
     let client = App::test()

@@ -2,7 +2,7 @@
 //! `TestClient` API — API key authentication, optional auth, and RBAC
 //! role enforcement, the way a real user would wire them up.
 
-#![cfg(feature = "json")]
+#![cfg(feature = "auth")]
 
 use ladoo::prelude::*;
 

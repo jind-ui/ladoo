@@ -80,9 +80,9 @@ impl Context {
 
     /// Borrow the inner request.
     ///
-    /// Used by auth and RBAC middleware to pass the request to
-    /// [`AuthProvider::authenticate`](crate::auth::AuthProvider::authenticate)
+    /// Used by auth and RBAC middleware to inspect the request
     /// without consuming the context.
+    #[cfg(feature = "auth")]
     pub(crate) fn request(&self) -> &Request {
         &self.request
     }
@@ -191,6 +191,7 @@ mod tests {
         assert_eq!(req.path(), "/test");
     }
 
+    #[cfg(feature = "auth")]
     #[test]
     fn request_borrows_inner_without_consuming_context() {
         let req = Request::test(Method::GET, "/test");

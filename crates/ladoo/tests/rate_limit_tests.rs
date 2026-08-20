@@ -1,3 +1,5 @@
+#![cfg(feature = "rate-limit")]
+
 use http::StatusCode;
 use ladoo::prelude::*;
 use std::time::Duration;

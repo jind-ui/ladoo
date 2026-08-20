@@ -59,7 +59,14 @@ validator = { version = "0.19", features = ["derive"], optional = true }
 # `tests/http2_test.rs`), which need a real TCP server (`App::spawn`)
 # to exercise HTTP/2 over the wire — the in-memory `TestClient` can't
 # negotiate a wire protocol.
-ladoo = { path = ".", features = ["test-server"] }
+#
+# `default-features = false` is required here: without it, Cargo
+# unifies this self-referencing dev-dependency edge with the crate's
+# own feature resolution, silently re-enabling the `default` feature
+# set even when the crate is built with `--no-default-features`. That
+# would defeat the feature-gating this crate relies on for its own
+# integration tests.
+ladoo = { path = ".", features = ["test-server"], default-features = false }
 jsonwebtoken = "9"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }

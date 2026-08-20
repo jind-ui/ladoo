@@ -21,6 +21,7 @@ pub use crate::config::{Config, ConfigError};
 pub use crate::Config;
 pub use crate::context::Context;
 pub use crate::config::Environment;
+#[cfg(feature = "cors")]
 pub use crate::cors::Cors;
 pub use crate::error::{Error, Result};
 pub use crate::extract::FromRequest;
@@ -41,14 +42,18 @@ pub use crate::pagination::{
 };
 pub use crate::middleware::{Middleware, Next};
 pub use crate::plugin::Plugin;
+#[cfg(feature = "rate-limit")]
 pub use crate::rate_limit::{MemoryStore, RateKey, RateLimit, RateStore};
 #[cfg(feature = "json")]
 pub use crate::extract::Query;
 #[cfg(feature = "json")]
 pub use crate::extract::Path;
 pub use crate::extract::{Valid, Validate};
+#[cfg(feature = "auth")]
 pub use crate::auth::{Auth, AuthError, AuthProvider, HasRole};
+#[cfg(feature = "auth")]
 pub use crate::auth::providers::ApiKeyAuth;
+#[cfg(feature = "auth")]
 pub use crate::auth::rbac::{Rbac, RequireRole, RequirePermission, ResourcePolicy};
 #[cfg(feature = "auth-jwt")]
 pub use crate::auth::providers::JwtAuth;
@@ -57,6 +62,7 @@ pub use crate::request::Request;
 #[cfg(feature = "logging")]
 pub use crate::logging::RequestId;
 pub use crate::router::Router;
+#[cfg(feature = "secure-headers")]
 pub use crate::secure_headers::SecureHeaders;
 pub use crate::state::State;
 pub use http::StatusCode;

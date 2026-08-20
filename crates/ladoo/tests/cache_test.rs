@@ -1,5 +1,7 @@
 //! Integration tests for the caching subsystem.
 
+#![cfg(feature = "cache")]
+
 use std::time::Duration;
 
 use ladoo::cache::MemoryStore;

@@ -1,3 +1,5 @@
+#![cfg(feature = "cors")]
+
 use http::{Method, StatusCode};
 use ladoo::prelude::*;
 

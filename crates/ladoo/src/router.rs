@@ -738,6 +738,7 @@ impl Router {
         self
     }
 
+    #[cfg(feature = "auth")]
     /// Attach an authentication provider to this route group.
     ///
     /// All routes in this router will require authentication via the
