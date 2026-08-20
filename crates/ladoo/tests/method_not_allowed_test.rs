@@ -1,4 +1,6 @@
-use http::{Method, StatusCode};
+use http::StatusCode;
+#[cfg(feature = "cors")]
+use http::Method;
 use ladoo::prelude::*;
 
 #[tokio::test]
