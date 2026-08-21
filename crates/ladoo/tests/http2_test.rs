@@ -20,11 +20,7 @@ async fn h2c_prior_knowledge_responds() {
         .build()
         .unwrap();
 
-    let resp = client
-        .get(server.url("/hello"))
-        .send()
-        .await
-        .unwrap();
+    let resp = client.get(server.url("/hello")).send().await.unwrap();
 
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.version(), reqwest::Version::HTTP_2);
@@ -39,16 +35,9 @@ async fn http1_still_works_with_auto_builder() {
         .spawn()
         .await;
 
-    let client = reqwest::Client::builder()
-        .http1_only()
-        .build()
-        .unwrap();
+    let client = reqwest::Client::builder().http1_only().build().unwrap();
 
-    let resp = client
-        .get(server.url("/hello"))
-        .send()
-        .await
-        .unwrap();
+    let resp = client.get(server.url("/hello")).send().await.unwrap();
 
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.version(), reqwest::Version::HTTP_11);

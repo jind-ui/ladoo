@@ -69,14 +69,8 @@ async fn customized_secure_headers() {
         .into_client();
 
     let resp = client.get("/").send().await;
-    assert_eq!(
-        resp.header("strict-transport-security"),
-        Some("max-age=0")
-    );
+    assert_eq!(resp.header("strict-transport-security"), Some("max-age=0"));
     assert!(resp.header("x-frame-options").is_none());
-    assert_eq!(
-        resp.header("permissions-policy"),
-        Some("camera=(self)")
-    );
+    assert_eq!(resp.header("permissions-policy"), Some("camera=(self)"));
     assert_eq!(resp.header("x-content-type-options"), Some("nosniff"));
 }

@@ -34,10 +34,7 @@ use crate::response::{IntoResponse, Response};
 /// [`IntoHandler`], which auto-wraps both sync and async functions.
 pub trait Handler: Send + std::marker::Sync {
     /// Process an HTTP request and return a response.
-    fn call(
-        &self,
-        req: Request,
-    ) -> Pin<Box<dyn Future<Output = Response> + Send + '_>>;
+    fn call(&self, req: Request) -> Pin<Box<dyn Future<Output = Response> + Send + '_>>;
 }
 
 /// Convert a function or closure into a boxed [`Handler`].
@@ -98,10 +95,7 @@ where
     F: Fn(Request) -> R + Send + std::marker::Sync + 'static,
     R: IntoResponse + 'static,
 {
-    fn call(
-        &self,
-        req: Request,
-    ) -> Pin<Box<dyn Future<Output = Response> + Send + '_>> {
+    fn call(&self, req: Request) -> Pin<Box<dyn Future<Output = Response> + Send + '_>> {
         let response = (self.f)(req).into_response();
         Box::pin(async move { response })
     }
@@ -126,10 +120,7 @@ where
     Fut: Future<Output = R> + Send + 'static,
     R: IntoResponse,
 {
-    fn call(
-        &self,
-        req: Request,
-    ) -> Pin<Box<dyn Future<Output = Response> + Send + '_>> {
+    fn call(&self, req: Request) -> Pin<Box<dyn Future<Output = Response> + Send + '_>> {
         let fut = (self.f)(req);
         Box::pin(async move { fut.await.into_response() })
     }
@@ -255,8 +246,25 @@ impl_extract_handler!((T1, t1), (T2, t2), (T3, t3));
 impl_extract_handler!((T1, t1), (T2, t2), (T3, t3), (T4, t4));
 impl_extract_handler!((T1, t1), (T2, t2), (T3, t3), (T4, t4), (T5, t5));
 impl_extract_handler!((T1, t1), (T2, t2), (T3, t3), (T4, t4), (T5, t5), (T6, t6));
-impl_extract_handler!((T1, t1), (T2, t2), (T3, t3), (T4, t4), (T5, t5), (T6, t6), (T7, t7));
-impl_extract_handler!((T1, t1), (T2, t2), (T3, t3), (T4, t4), (T5, t5), (T6, t6), (T7, t7), (T8, t8));
+impl_extract_handler!(
+    (T1, t1),
+    (T2, t2),
+    (T3, t3),
+    (T4, t4),
+    (T5, t5),
+    (T6, t6),
+    (T7, t7)
+);
+impl_extract_handler!(
+    (T1, t1),
+    (T2, t2),
+    (T3, t3),
+    (T4, t4),
+    (T5, t5),
+    (T6, t6),
+    (T7, t7),
+    (T8, t8)
+);
 
 #[cfg(test)]
 mod tests {
@@ -293,8 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_handler_returns_tuple() {
-        let handler =
-            (|_req: Request| (StatusCode::CREATED, "created")).into_handler();
+        let handler = (|_req: Request| (StatusCode::CREATED, "created")).into_handler();
         let req = Request::test(Method::GET, "/");
         let resp = handler.call(req).await;
         assert_eq!(resp.status(), StatusCode::CREATED);
@@ -397,10 +404,8 @@ mod tests {
 
     #[tokio::test]
     async fn two_extractor_sync_handler() {
-        let handler = (|method: MethodStr, path: PathStr| {
-            format!("{} {}", method.0, path.0)
-        })
-        .into_handler();
+        let handler =
+            (|method: MethodStr, path: PathStr| format!("{} {}", method.0, path.0)).into_handler();
         let req = Request::test(Method::POST, "/submit");
         let resp = handler.call(req).await;
         assert_eq!(resp.body_bytes(), b"POST /submit");

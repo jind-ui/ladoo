@@ -1,6 +1,6 @@
-use http::StatusCode;
 #[cfg(feature = "cors")]
 use http::Method;
+use http::StatusCode;
 use ladoo::prelude::*;
 
 #[tokio::test]
@@ -59,8 +59,8 @@ async fn cors_preflight_still_works_with_405_fallback() {
 
 #[tokio::test]
 async fn middleware_runs_before_405_handler() {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     let ran = Arc::new(AtomicBool::new(false));
     let ran_clone = ran.clone();

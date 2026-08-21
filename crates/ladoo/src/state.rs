@@ -56,7 +56,8 @@ impl TypeMap {
 
     /// Insert a value wrapped in `Arc`, replacing any previous value of the same type.
     pub(crate) fn insert_shared<T: Send + Sync + 'static>(&mut self, value: T) {
-        self.map.insert(TypeId::of::<T>(), Box::new(Arc::new(value)));
+        self.map
+            .insert(TypeId::of::<T>(), Box::new(Arc::new(value)));
     }
 
     /// Get an `Arc` reference to a shared value by type.

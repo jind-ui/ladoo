@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use http::StatusCode;
-use http_body_util::{BodyExt, Full, Limited, LengthLimitError};
+use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
@@ -146,9 +146,7 @@ pub(crate) async fn serve(
     let _ = shutdown_tx.send(true);
 
     // Drain with timeout
-    let drain = async {
-        while connections.join_next().await.is_some() {}
-    };
+    let drain = async { while connections.join_next().await.is_some() {} };
 
     match tokio::time::timeout(shutdown_timeout, drain).await {
         Ok(()) => {
@@ -188,9 +186,7 @@ pub(crate) async fn serve(
                 #[cfg(feature = "logging")]
                 {
                     let remaining = shutdown_set.len();
-                    tracing::warn!(
-                        "shutdown hook timeout, {remaining} hook(s) still running"
-                    );
+                    tracing::warn!("shutdown hook timeout, {remaining} hook(s) still running");
                 }
 
                 shutdown_set.abort_all();
@@ -266,9 +262,7 @@ async fn handle_request(
                 return hyper::Response::builder()
                     .status(StatusCode::PAYLOAD_TOO_LARGE)
                     .header(http::header::CONTENT_TYPE, "application/json")
-                    .body(Full::new(Bytes::from(
-                        r#"{"error":"Payload too large"}"#,
-                    )))
+                    .body(Full::new(Bytes::from(r#"{"error":"Payload too large"}"#)))
                     .unwrap();
             }
             return hyper::Response::builder()
@@ -341,9 +335,7 @@ pub(crate) async fn handle_app_request(
         // registered globally or on a `.group(...)`; if nothing
         // short-circuits, the fallback handler below produces a 405
         // with an `Allow` header listing the methods that are handled.
-        let route_middleware = router
-            .find_middleware_for_path(&path)
-            .unwrap_or(&[]);
+        let route_middleware = router.find_middleware_for_path(&path).unwrap_or(&[]);
 
         let allow_value = allowed
             .iter()
@@ -355,13 +347,13 @@ pub(crate) async fn handle_app_request(
         let method_not_allowed_handler: Arc<dyn crate::handler::Handler> =
             (move |_req: Request| {
                 use crate::response::IntoResponse;
-                let mut resp = crate::error::Error::method_not_allowed("Method Not Allowed")
-                    .into_response();
+                let mut resp =
+                    crate::error::Error::method_not_allowed("Method Not Allowed").into_response();
                 resp.set_header("allow", &allow_value);
                 resp
             })
-                .into_handler()
-                .into();
+            .into_handler()
+            .into();
 
         let mut all_middleware: Vec<Arc<dyn Middleware>> = Vec::new();
         all_middleware.extend_from_slice(global_middleware);
@@ -434,7 +426,10 @@ mod tests {
 
     #[tokio::test]
     async fn handle_app_request_runs_middleware() {
-        async fn tag(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+        async fn tag(
+            ctx: crate::context::Context,
+            next: crate::middleware::Next,
+        ) -> crate::error::Result<crate::response::Response> {
             let mut resp = next.run(ctx).await?;
             resp.set_header("X-Tag", "tested");
             Ok(resp)
@@ -727,10 +722,7 @@ mod tests {
         let client = reqwest::Client::new();
         let resp = client.put(format!("{url}/items")).send().await.unwrap();
         assert_eq!(resp.status(), 405);
-        assert_eq!(
-            resp.headers().get("allow").unwrap(),
-            "DELETE, GET, POST"
-        );
+        assert_eq!(resp.headers().get("allow").unwrap(), "DELETE, GET, POST");
 
         handle.abort();
     }
@@ -908,12 +900,12 @@ mod tests {
             name: String,
         }
 
-        let app = App::new().get("/greet", |q: Query<Params>| {
-            format!("Hello, {}!", q.name)
-        });
+        let app = App::new().get("/greet", |q: Query<Params>| format!("Hello, {}!", q.name));
         let (url, handle) = start_test_server(app).await;
 
-        let resp = reqwest::get(format!("{url}/greet?name=Alice")).await.unwrap();
+        let resp = reqwest::get(format!("{url}/greet?name=Alice"))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), 200);
         assert_eq!(resp.text().await.unwrap(), "Hello, Alice!");
 
@@ -938,7 +930,9 @@ mod tests {
         }
 
         let app = App::new().post("/add", |body: Json<Input>| {
-            Json(Output { sum: body.x + body.y })
+            Json(Output {
+                sum: body.x + body.y,
+            })
         });
         let (url, handle) = start_test_server(app).await;
 
@@ -1023,7 +1017,12 @@ mod tests {
 
         let resp = reqwest::get(format!("{url}/page")).await.unwrap();
         assert_eq!(resp.status(), 200);
-        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert_eq!(ct, "text/html; charset=utf-8");
         assert_eq!(resp.text().await.unwrap(), "<h1>Hello</h1>");
 
@@ -1098,12 +1097,15 @@ mod tests {
 
     #[tokio::test]
     async fn multiple_state_types_over_http() {
-        let app = App::new().provide(42_u32).provide(String::from("hello")).get(
-            "/both",
-            |n: crate::state::State<u32>, s: crate::state::State<String>| {
-                format!("{}: {}", *s, *n)
-            },
-        );
+        let app = App::new()
+            .provide(42_u32)
+            .provide(String::from("hello"))
+            .get(
+                "/both",
+                |n: crate::state::State<u32>, s: crate::state::State<String>| {
+                    format!("{}: {}", *s, *n)
+                },
+            );
 
         let (url, handle) = start_test_server(app).await;
 
@@ -1156,7 +1158,10 @@ mod tests {
 
         static MW_RAN: AtomicBool = AtomicBool::new(false);
 
-        async fn test_mw(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+        async fn test_mw(
+            ctx: crate::context::Context,
+            next: crate::middleware::Next,
+        ) -> crate::error::Result<crate::response::Response> {
             MW_RAN.store(true, Ordering::SeqCst);
             next.run(ctx).await
         }
@@ -1177,7 +1182,10 @@ mod tests {
 
     #[tokio::test]
     async fn middleware_modifies_response() {
-        async fn add_header(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+        async fn add_header(
+            ctx: crate::context::Context,
+            next: crate::middleware::Next,
+        ) -> crate::error::Result<crate::response::Response> {
             let mut resp = next.run(ctx).await?;
             resp.set_header("X-Custom", "middleware");
             Ok(resp)
@@ -1200,7 +1208,10 @@ mod tests {
 
     #[tokio::test]
     async fn middleware_short_circuits() {
-        async fn blocker(_ctx: crate::context::Context, _next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+        async fn blocker(
+            _ctx: crate::context::Context,
+            _next: crate::middleware::Next,
+        ) -> crate::error::Result<crate::response::Response> {
             Err(crate::error::Error::unauthorized("no access"))
         }
 
@@ -1217,8 +1228,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_middleware_works() {
-        let app = App::new()
-            .get("/", |_req: crate::request::Request| "no middleware");
+        let app = App::new().get("/", |_req: crate::request::Request| "no middleware");
         let (url, handle) = start_test_server(app).await;
 
         let resp = reqwest::get(&url).await.unwrap();
@@ -1241,7 +1251,12 @@ mod tests {
 
         let resp = reqwest::get(format!("{url}/err")).await.unwrap();
         assert_eq!(resp.status(), 400);
-        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert_eq!(ct, "application/json");
         let body: serde_json::Value = resp.json().await.unwrap();
         assert_eq!(body["error"], "invalid");
@@ -1253,7 +1268,10 @@ mod tests {
 
     #[tokio::test]
     async fn group_with_middleware_over_http() {
-        async fn add_header(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+        async fn add_header(
+            ctx: crate::context::Context,
+            next: crate::middleware::Next,
+        ) -> crate::error::Result<crate::response::Response> {
             let mut resp = next.run(ctx).await?;
             resp.set_header("X-Group", "admin");
             Ok(resp)
@@ -1273,7 +1291,9 @@ mod tests {
         assert_eq!(public_resp.text().await.unwrap(), "public");
 
         // Admin route — group middleware adds header
-        let resp = reqwest::get(format!("{url}/admin/dashboard")).await.unwrap();
+        let resp = reqwest::get(format!("{url}/admin/dashboard"))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), 200);
         assert_eq!(
             resp.headers().get("X-Group").unwrap().to_str().unwrap(),
@@ -1301,12 +1321,18 @@ mod tests {
 
     #[tokio::test]
     async fn multiple_global_middleware_execute_in_order() {
-        async fn mw1(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+        async fn mw1(
+            ctx: crate::context::Context,
+            next: crate::middleware::Next,
+        ) -> crate::error::Result<crate::response::Response> {
             let mut resp = next.run(ctx).await?;
             resp.set_header("X-MW1", "yes");
             Ok(resp)
         }
-        async fn mw2(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+        async fn mw2(
+            ctx: crate::context::Context,
+            next: crate::middleware::Next,
+        ) -> crate::error::Result<crate::response::Response> {
             let mut resp = next.run(ctx).await?;
             resp.set_header("X-MW2", "yes");
             Ok(resp)
@@ -1331,7 +1357,10 @@ mod tests {
         use std::sync::atomic::{AtomicBool, Ordering};
         static MW_RAN: AtomicBool = AtomicBool::new(false);
 
-        async fn tracker(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+        async fn tracker(
+            ctx: crate::context::Context,
+            next: crate::middleware::Next,
+        ) -> crate::error::Result<crate::response::Response> {
             MW_RAN.store(true, Ordering::SeqCst);
             next.run(ctx).await
         }
@@ -1351,11 +1380,10 @@ mod tests {
 
     #[tokio::test]
     async fn nested_group_over_http() {
-        let app = App::new()
-            .group("/api", |r| {
-                r.get("/health", |_req: crate::request::Request| "ok")
-                 .get("/version", |_req: crate::request::Request| "1.0")
-            });
+        let app = App::new().group("/api", |r| {
+            r.get("/health", |_req: crate::request::Request| "ok")
+                .get("/version", |_req: crate::request::Request| "1.0")
+        });
         let (url, handle) = start_test_server(app).await;
 
         let resp = reqwest::get(format!("{url}/api/health")).await.unwrap();
@@ -1527,6 +1555,9 @@ mod tests {
             .expect("serve hung on slow shutdown hook")
             .expect("serve panicked");
 
-        assert!(fast_flag.load(Ordering::SeqCst), "fast hook should have run");
+        assert!(
+            fast_flag.load(Ordering::SeqCst),
+            "fast hook should have run"
+        );
     }
 }

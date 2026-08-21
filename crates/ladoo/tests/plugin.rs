@@ -17,9 +17,7 @@ impl Plugin for HealthPlugin {
 
 #[tokio::test]
 async fn plugin_via_prelude_adds_route_and_state() {
-    let client = App::test()
-        .plugin(HealthPlugin)
-        .into_client();
+    let client = App::test().plugin(HealthPlugin).into_client();
 
     let resp = client.get("/health").send().await;
     assert_eq!(resp.status(), StatusCode::OK);

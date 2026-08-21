@@ -210,7 +210,12 @@ impl Cache {
     ///
     /// `ttl`: `None` uses the [`default_ttl`](Cache::default_ttl)
     /// (or no expiry if that is also `None`). `Some(duration)` overrides.
-    pub async fn set<T: Serialize>(&self, key: &str, value: &T, ttl: Option<Duration>) -> Result<()> {
+    pub async fn set<T: Serialize>(
+        &self,
+        key: &str,
+        value: &T,
+        ttl: Option<Duration>,
+    ) -> Result<()> {
         let bytes = serde_json::to_vec(value)
             .map_err(|e| Error::internal("cache serialization failed").with_source(e))?;
         self.store.set(key, bytes, self.resolve_ttl(ttl)).await

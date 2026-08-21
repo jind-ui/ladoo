@@ -488,10 +488,10 @@ pub mod response;
 pub mod router;
 #[cfg(feature = "secure-headers")]
 pub mod secure_headers;
+pub(crate) mod server;
 pub(crate) mod shutdown;
 pub mod state;
 pub mod testing;
-pub(crate) mod server;
 #[cfg(feature = "tls")]
 pub(crate) mod tls;
 

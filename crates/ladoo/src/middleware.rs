@@ -78,10 +78,7 @@ pub struct Next {
 
 impl Next {
     /// Create a new `Next` from a middleware stack and handler.
-    pub(crate) fn new(
-        middleware: Arc<[Arc<dyn Middleware>]>,
-        handler: Arc<dyn Handler>,
-    ) -> Self {
+    pub(crate) fn new(middleware: Arc<[Arc<dyn Middleware>]>, handler: Arc<dyn Handler>) -> Self {
         Self {
             middleware,
             handler,

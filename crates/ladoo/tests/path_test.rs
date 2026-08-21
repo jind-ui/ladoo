@@ -117,11 +117,7 @@ async fn path_does_not_consume_body() {
         })
         .into_client();
 
-    let resp = client
-        .post("/echo/5")
-        .body(b"hello")
-        .send()
-        .await;
+    let resp = client.post("/echo/5").body(b"hello").send().await;
     assert_eq!(resp.status(), 200);
     assert_eq!(resp.text(), "5:hello");
 }

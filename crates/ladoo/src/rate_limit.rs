@@ -84,12 +84,7 @@ pub trait RateStore: Send + Sync + 'static {
     /// If the key has no entry or its window has expired, a new window
     /// starts. Returns a [`RateResult`] indicating whether the request
     /// is allowed and the current counter state.
-    async fn check_and_increment(
-        &self,
-        key: &str,
-        limit: u64,
-        window: Duration,
-    ) -> RateResult;
+    async fn check_and_increment(&self, key: &str, limit: u64, window: Duration) -> RateResult;
 
     /// Reset the counter for `key`.
     ///
@@ -173,17 +168,13 @@ impl Default for MemoryStore {
 
 #[async_trait::async_trait]
 impl RateStore for MemoryStore {
-    async fn check_and_increment(
-        &self,
-        key: &str,
-        limit: u64,
-        window: Duration,
-    ) -> RateResult {
+    async fn check_and_increment(&self, key: &str, limit: u64, window: Duration) -> RateResult {
         let now = tokio::time::Instant::now();
 
-        let mut entry = self.entries.entry(key.to_string()).or_insert_with(|| {
-            (0, now + window)
-        });
+        let mut entry = self
+            .entries
+            .entry(key.to_string())
+            .or_insert_with(|| (0, now + window));
 
         let (count, expires) = entry.value_mut();
 
@@ -354,10 +345,7 @@ impl<S: RateStore> RateLimit<S> {
     /// Ignored when tiered mode is active (tiered mode always uses
     /// the resolve function output as the key prefix).
     pub fn key(mut self, key: RateKey) -> Self {
-        if let RateLimitConfig::Simple {
-            key: ref mut k, ..
-        } = self.config
-        {
+        if let RateLimitConfig::Simple { key: ref mut k, .. } = self.config {
             *k = key;
         }
         self
@@ -483,8 +471,7 @@ impl<S: RateStore + 'static> Middleware for RateLimit<S> {
                     "{{\"error\":\"rate limit exceeded\",\"retry_after\":{}}}",
                     reset_secs
                 );
-                let mut resp =
-                    Response::with_json_body(http::StatusCode::TOO_MANY_REQUESTS, &body);
+                let mut resp = Response::with_json_body(http::StatusCode::TOO_MANY_REQUESTS, &body);
                 resp.set_header("x-ratelimit-limit", &result.limit.to_string());
                 resp.set_header("x-ratelimit-remaining", "0");
                 resp.set_header("x-ratelimit-reset", &reset_secs.to_string());
@@ -663,9 +650,7 @@ mod tests {
     // `#[test]`.
     #[tokio::test]
     async fn rate_limit_builder_sets_limit_and_window() {
-        let rl = RateLimit::new()
-            .limit(100)
-            .window(Duration::from_secs(900));
+        let rl = RateLimit::new().limit(100).window(Duration::from_secs(900));
         // Verify through internal state — limit/window are stored correctly
         assert!(matches!(
             &rl.config,
@@ -766,26 +751,14 @@ mod tests {
             .get("/", |_: Request| "ok")
             .into_client();
 
-        let resp = client
-            .get("/")
-            .header("x-api-key", "key-a")
-            .send()
-            .await;
+        let resp = client.get("/").header("x-api-key", "key-a").send().await;
         assert_eq!(resp.status(), StatusCode::OK);
 
-        let resp = client
-            .get("/")
-            .header("x-api-key", "key-a")
-            .send()
-            .await;
+        let resp = client.get("/").header("x-api-key", "key-a").send().await;
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 
         // Different key → separate counter
-        let resp = client
-            .get("/")
-            .header("x-api-key", "key-b")
-            .send()
-            .await;
+        let resp = client.get("/").header("x-api-key", "key-b").send().await;
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
@@ -796,9 +769,7 @@ mod tests {
                 RateLimit::new()
                     .limit(1)
                     .window(Duration::from_secs(60))
-                    .key(RateKey::Custom(Arc::new(|_ctx| {
-                        "everyone".to_string()
-                    }))),
+                    .key(RateKey::Custom(Arc::new(|_ctx| "everyone".to_string()))),
             )
             .get("/", |_: Request| "ok")
             .into_client();

@@ -13,12 +13,7 @@ async fn rate_limit_full_flow_with_recovery() {
     // below clears it.
     let window = Duration::from_millis(50);
     let client = App::test()
-        .use_mw(
-            RateLimit::new()
-                .limit(2)
-                .window(window)
-                .key(RateKey::Ip),
-        )
+        .use_mw(RateLimit::new().limit(2).window(window).key(RateKey::Ip))
         .get("/", |_: Request| "ok")
         .into_client();
 

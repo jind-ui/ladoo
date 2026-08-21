@@ -85,9 +85,7 @@ impl<U: Clone + Send + Sync + 'static> AuthProvider for ApiKeyAuth<U> {
         let key_bytes = key.as_bytes();
         self.keys
             .iter()
-            .find(|(k, _)| {
-                k.len() == key_bytes.len() && bool::from(k.as_bytes().ct_eq(key_bytes))
-            })
+            .find(|(k, _)| k.len() == key_bytes.len() && bool::from(k.as_bytes().ct_eq(key_bytes)))
             .map(|(_, user)| user.clone())
             .ok_or_else(|| AuthError::Invalid("Invalid API key".into()))
     }
@@ -105,19 +103,32 @@ mod tests {
 
     #[tokio::test]
     async fn valid_key_returns_user() {
-        let auth = ApiKeyAuth::new()
-            .key("key-1", User { name: "Alice".into() });
+        let auth = ApiKeyAuth::new().key(
+            "key-1",
+            User {
+                name: "Alice".into(),
+            },
+        );
         let mut headers = http::HeaderMap::new();
         headers.insert("X-API-Key", http::HeaderValue::from_static("key-1"));
         let req = Request::test_with_headers(Method::GET, "/", headers);
         let result = auth.authenticate(&req).await;
-        assert_eq!(result.unwrap(), User { name: "Alice".into() });
+        assert_eq!(
+            result.unwrap(),
+            User {
+                name: "Alice".into()
+            }
+        );
     }
 
     #[tokio::test]
     async fn missing_header_returns_missing() {
-        let auth = ApiKeyAuth::<User>::new()
-            .key("key-1", User { name: "Alice".into() });
+        let auth = ApiKeyAuth::<User>::new().key(
+            "key-1",
+            User {
+                name: "Alice".into(),
+            },
+        );
         let req = Request::test(Method::GET, "/");
         let result = auth.authenticate(&req).await;
         assert!(matches!(result.unwrap_err(), AuthError::Missing));
@@ -125,8 +136,12 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_key_returns_invalid() {
-        let auth = ApiKeyAuth::new()
-            .key("key-1", User { name: "Alice".into() });
+        let auth = ApiKeyAuth::new().key(
+            "key-1",
+            User {
+                name: "Alice".into(),
+            },
+        );
         let mut headers = http::HeaderMap::new();
         headers.insert("X-API-Key", http::HeaderValue::from_static("wrong"));
         let req = Request::test_with_headers(Method::GET, "/", headers);
@@ -148,7 +163,12 @@ mod tests {
 
     #[tokio::test]
     async fn api_key_rejects_invalid_key_with_generic_message() {
-        let auth = ApiKeyAuth::new().key("key-abc-123", User { name: "Alice".into() });
+        let auth = ApiKeyAuth::new().key(
+            "key-abc-123",
+            User {
+                name: "Alice".into(),
+            },
+        );
         let mut headers = http::HeaderMap::new();
         headers.insert("X-API-Key", http::HeaderValue::from_static("wrong-key"));
         let req = Request::test_with_headers(Method::GET, "/", headers);
@@ -162,7 +182,12 @@ mod tests {
     #[tokio::test]
     async fn multiple_keys() {
         let auth = ApiKeyAuth::new()
-            .key("key-1", User { name: "Alice".into() })
+            .key(
+                "key-1",
+                User {
+                    name: "Alice".into(),
+                },
+            )
             .key("key-2", User { name: "Bob".into() });
         let mut headers = http::HeaderMap::new();
         headers.insert("X-API-Key", http::HeaderValue::from_static("key-2"));

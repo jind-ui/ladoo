@@ -90,9 +90,7 @@ mod tests {
             dummy_handler(),
         );
 
-        let m = router
-            .find(&Method::GET, "/users/1/posts/99")
-            .unwrap();
+        let m = router.find(&Method::GET, "/users/1/posts/99").unwrap();
         assert_eq!(
             m.params,
             vec![
@@ -380,11 +378,7 @@ mod tests {
     fn static_prefix_beats_wildcard_prefix() {
         let mut router = Router::new();
         router.add(Method::GET, "/assets/*path", dummy_handler());
-        router.add(
-            Method::GET,
-            "/assets/favicon.ico",
-            dummy_handler(),
-        );
+        router.add(Method::GET, "/assets/favicon.ico", dummy_handler());
 
         let m = router.find(&Method::GET, "/assets/favicon.ico").unwrap();
         assert!(m.params.is_empty());
@@ -600,9 +594,7 @@ impl Router {
                     panic!("wildcard segment must have a name (e.g., '*path')");
                 }
                 if i != parts.len() - 1 {
-                    panic!(
-                        "wildcard segment '*{name}' must be the last segment in path pattern"
-                    );
+                    panic!("wildcard segment '*{name}' must be the last segment in path pattern");
                 }
                 segments.push(Segment::Wildcard(name.to_string()));
             } else if let Some(name) = s.strip_prefix(':') {
@@ -617,9 +609,7 @@ impl Router {
 
     /// Split a path string into non-empty segments.
     fn split_path(path: &str) -> Vec<&str> {
-        path.split('/')
-            .filter(|s| !s.is_empty())
-            .collect()
+        path.split('/').filter(|s| !s.is_empty()).collect()
     }
 
     /// Try to match path segments against a route pattern.
@@ -629,10 +619,7 @@ impl Router {
     /// pattern ends in a wildcard. Static segments matter most; among
     /// routes with the same static count, non-wildcard routes (params)
     /// outrank wildcard routes.
-    fn match_segments(
-        pattern: &[Segment],
-        path: &[&str],
-    ) -> Option<(PathParams, usize, bool)> {
+    fn match_segments(pattern: &[Segment], path: &[&str]) -> Option<(PathParams, usize, bool)> {
         let has_wildcard = matches!(pattern.last(), Some(Segment::Wildcard(_)));
 
         if has_wildcard {

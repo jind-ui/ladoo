@@ -107,8 +107,7 @@ impl Response {
     /// valid header value.
     pub fn set_header(&mut self, name: &str, value: &str) {
         self.headers.insert(
-            http::header::HeaderName::from_bytes(name.as_bytes())
-                .expect("invalid header name"),
+            http::header::HeaderName::from_bytes(name.as_bytes()).expect("invalid header name"),
             http::header::HeaderValue::from_str(value).expect("invalid header value"),
         );
     }

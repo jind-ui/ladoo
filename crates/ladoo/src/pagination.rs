@@ -265,8 +265,7 @@ pub struct CursorMeta {
 
 impl<T: Serialize> IntoResponse for CursorPage<T> {
     fn into_response(self) -> Response {
-        let body =
-            serde_json::to_vec(&self).expect("CursorPage<T> serialization cannot fail");
+        let body = serde_json::to_vec(&self).expect("CursorPage<T> serialization cannot fail");
         let mut headers = http::HeaderMap::new();
         headers.insert(
             http::header::CONTENT_TYPE,
@@ -286,14 +285,13 @@ struct RawCursorParams {
 impl FromRequest for CursorParams {
     fn from_request(req: &mut Request) -> Result<Self, Response> {
         let query_string = req.uri().query().unwrap_or("");
-        let raw: RawCursorParams =
-            serde_urlencoded::from_str(query_string).map_err(|e| {
-                (
-                    http::StatusCode::BAD_REQUEST,
-                    format!("Invalid cursor parameters: {e}"),
-                )
-                    .into_response()
-            })?;
+        let raw: RawCursorParams = serde_urlencoded::from_str(query_string).map_err(|e| {
+            (
+                http::StatusCode::BAD_REQUEST,
+                format!("Invalid cursor parameters: {e}"),
+            )
+                .into_response()
+        })?;
 
         if raw.after.is_some() && raw.before.is_some() {
             return Err((
@@ -350,33 +348,48 @@ mod tests {
 
     #[test]
     fn paginate_offset_page_one() {
-        let p = Paginate { page: 1, per_page: 20 };
+        let p = Paginate {
+            page: 1,
+            per_page: 20,
+        };
         assert_eq!(p.offset(), 0);
         assert_eq!(p.limit(), 20);
     }
 
     #[test]
     fn paginate_offset_page_three() {
-        let p = Paginate { page: 3, per_page: 10 };
+        let p = Paginate {
+            page: 3,
+            per_page: 10,
+        };
         assert_eq!(p.offset(), 20);
         assert_eq!(p.limit(), 10);
     }
 
     #[test]
     fn paginate_offset_page_zero_saturates() {
-        let p = Paginate { page: 0, per_page: 10 };
+        let p = Paginate {
+            page: 0,
+            per_page: 10,
+        };
         assert_eq!(p.offset(), 0);
     }
 
     #[test]
     fn paginate_offset_max_page_does_not_overflow() {
-        let p = Paginate { page: u64::MAX, per_page: 20 };
+        let p = Paginate {
+            page: u64::MAX,
+            per_page: 20,
+        };
         assert_eq!(p.offset(), u64::MAX);
     }
 
     #[test]
     fn paginate_respond_zero_per_page_does_not_divide_by_zero() {
-        let p = Paginate { page: 1, per_page: 0 };
+        let p = Paginate {
+            page: 1,
+            per_page: 0,
+        };
         let page: Page<u32> = p.respond(vec![1, 2, 3], 10);
         assert_eq!(page.meta.total_pages, 0);
         assert_eq!(page.meta.per_page, 0);
@@ -385,7 +398,10 @@ mod tests {
 
     #[test]
     fn paginate_respond_builds_correct_meta() {
-        let p = Paginate { page: 2, per_page: 10 };
+        let p = Paginate {
+            page: 2,
+            per_page: 10,
+        };
         let page: Page<String> = p.respond(vec!["a".into(), "b".into()], 50);
         assert_eq!(page.meta.page, 2);
         assert_eq!(page.meta.per_page, 10);
@@ -396,25 +412,32 @@ mod tests {
 
     #[test]
     fn paginate_respond_total_pages_rounds_up() {
-        let p = Paginate { page: 1, per_page: 10 };
+        let p = Paginate {
+            page: 1,
+            per_page: 10,
+        };
         let page: Page<u32> = p.respond(vec![], 51);
         assert_eq!(page.meta.total_pages, 6);
     }
 
     #[test]
     fn paginate_respond_zero_total() {
-        let p = Paginate { page: 1, per_page: 10 };
+        let p = Paginate {
+            page: 1,
+            per_page: 10,
+        };
         let page: Page<u32> = p.respond(vec![], 0);
         assert_eq!(page.meta.total_pages, 0);
     }
 
     #[test]
     fn cursor_respond_with_next_cursor() {
-        let c = CursorParams { after: None, before: None, limit: 10 };
-        let page: CursorPage<String> = c.respond(
-            vec!["a".into()],
-            Some("cursor_abc".into()),
-        );
+        let c = CursorParams {
+            after: None,
+            before: None,
+            limit: 10,
+        };
+        let page: CursorPage<String> = c.respond(vec!["a".into()], Some("cursor_abc".into()));
         assert_eq!(page.data.len(), 1);
         assert_eq!(page.meta.next_cursor, Some("cursor_abc".into()));
         assert!(page.meta.has_more);
@@ -422,7 +445,11 @@ mod tests {
 
     #[test]
     fn cursor_respond_no_more_items() {
-        let c = CursorParams { after: None, before: None, limit: 10 };
+        let c = CursorParams {
+            after: None,
+            before: None,
+            limit: 10,
+        };
         let page: CursorPage<u32> = c.respond(vec![1, 2], None);
         assert_eq!(page.meta.next_cursor, None);
         assert!(!page.meta.has_more);
@@ -471,7 +498,11 @@ mod tests {
     #[test]
     fn paginate_respects_pagination_config() {
         let mut req = crate::request::Request::test(Method::GET, "/users");
-        req.provide_test_state(PaginationConfig::new().default_per_page(25).max_per_page(50));
+        req.provide_test_state(
+            PaginationConfig::new()
+                .default_per_page(25)
+                .max_per_page(50),
+        );
         let p = Paginate::from_request(&mut req).unwrap();
         assert_eq!(p.per_page, 25);
     }
@@ -540,10 +571,7 @@ mod tests {
 
     #[test]
     fn cursor_both_after_and_before_returns_400() {
-        let mut req = crate::request::Request::test(
-            Method::GET,
-            "/posts?after=a&before=b",
-        );
+        let mut req = crate::request::Request::test(Method::GET, "/posts?after=a&before=b");
         let result = CursorParams::from_request(&mut req);
         assert!(result.is_err());
         let resp = result.unwrap_err();
@@ -597,8 +625,7 @@ mod tests {
         let resp = page.into_response();
         assert_eq!(resp.status(), http::StatusCode::OK);
         assert_eq!(resp.content_type(), Some("application/json"));
-        let body: serde_json::Value =
-            serde_json::from_slice(resp.body_bytes()).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert_eq!(body["meta"]["total"], 2);
         assert_eq!(body["data"].as_array().unwrap().len(), 2);
     }
@@ -615,15 +642,17 @@ mod tests {
         let resp = page.into_response();
         assert_eq!(resp.status(), http::StatusCode::OK);
         assert_eq!(resp.content_type(), Some("application/json"));
-        let body: serde_json::Value =
-            serde_json::from_slice(resp.body_bytes()).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert_eq!(body["meta"]["next_cursor"], "cursor_xyz");
         assert!(body["meta"]["has_more"].as_bool().unwrap());
     }
 
     #[test]
     fn page_serializes_correct_structure() {
-        let p = Paginate { page: 3, per_page: 5 };
+        let p = Paginate {
+            page: 3,
+            per_page: 5,
+        };
         let page = p.respond(vec!["x"], 12_u64);
         let json: serde_json::Value =
             serde_json::from_slice(page.into_response().body_bytes()).unwrap();

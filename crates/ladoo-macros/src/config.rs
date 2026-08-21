@@ -23,10 +23,7 @@ impl Parse for ConfigAttr {
             let lit: LitStr = input.parse()?;
             Ok(ConfigAttr::Env(lit.value()))
         } else {
-            Err(syn::Error::new(
-                ident.span(),
-                "expected `default` or `env`",
-            ))
+            Err(syn::Error::new(ident.span(), "expected `default` or `env`"))
         }
     }
 }

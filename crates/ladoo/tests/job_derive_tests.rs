@@ -40,7 +40,10 @@ fn derive_defaults_config() {
     let config = job.config();
     assert_eq!(config.max_retries, 0);
     assert_eq!(config.timeout, Duration::from_secs(30));
-    assert!(matches!(config.backoff, BackoffStrategy::Exponential { .. }));
+    assert!(matches!(
+        config.backoff,
+        BackoffStrategy::Exponential { .. }
+    ));
 }
 
 #[test]

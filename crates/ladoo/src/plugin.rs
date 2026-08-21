@@ -38,8 +38,7 @@ use crate::app::App;
 ///
 /// Stored by [`App::on_shutdown`](crate::app::App::on_shutdown) and
 /// executed after all connections drain during graceful shutdown.
-pub(crate) type ShutdownHook =
-    Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
+pub(crate) type ShutdownHook = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
 
 /// A composable unit of application configuration.
 ///

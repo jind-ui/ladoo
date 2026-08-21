@@ -50,8 +50,9 @@ fn variant_attr(variant: &Variant) -> syn::Result<VariantAttr> {
         if !attr.path().is_ident("error") {
             continue;
         }
-        let fields =
-            attr.parse_args_with(syn::punctuated::Punctuated::<ErrorField, Token![,]>::parse_terminated)?;
+        let fields = attr.parse_args_with(
+            syn::punctuated::Punctuated::<ErrorField, Token![,]>::parse_terminated,
+        )?;
         for field in fields {
             match field {
                 ErrorField::Status(s) => status = s,

@@ -317,8 +317,7 @@ mod tests {
     #[test]
     fn auth_error_json_body() {
         let resp = AuthError::Missing.into_response();
-        let body: serde_json::Value =
-            serde_json::from_slice(resp.body_bytes()).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert_eq!(body["error"], "Authentication required");
         assert_eq!(body["status"], 401);
     }
@@ -407,7 +406,9 @@ mod tests {
         use crate::handler::IntoHandler;
 
         let provider = AlwaysAuth {
-            user: TestUser { name: "Alice".into() },
+            user: TestUser {
+                name: "Alice".into(),
+            },
         };
         let mw = AuthGuardMiddleware::new(provider);
 
@@ -477,16 +478,17 @@ mod tests {
         use crate::app::App;
 
         let provider = AlwaysAuth {
-            user: TestUser { name: "Alice".into() },
+            user: TestUser {
+                name: "Alice".into(),
+            },
         };
 
         let client = App::test()
             .group("/api", |r| {
-                r.guard(provider)
-                    .get("/me", |mut req: Request| {
-                        let user = Auth::<TestUser>::from_request(&mut req).unwrap();
-                        user.name.clone()
-                    })
+                r.guard(provider).get("/me", |mut req: Request| {
+                    let user = Auth::<TestUser>::from_request(&mut req).unwrap();
+                    user.name.clone()
+                })
             })
             .into_client();
 

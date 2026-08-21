@@ -211,14 +211,18 @@ impl<'de> VariantAccess<'de> for UnitVariantAccess {
     where
         T: DeserializeSeed<'de>,
     {
-        Err(de::Error::custom("path params do not support newtype enum variants"))
+        Err(de::Error::custom(
+            "path params do not support newtype enum variants",
+        ))
     }
 
     fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        Err(de::Error::custom("path params do not support tuple enum variants"))
+        Err(de::Error::custom(
+            "path params do not support tuple enum variants",
+        ))
     }
 
     fn struct_variant<V>(
@@ -229,7 +233,9 @@ impl<'de> VariantAccess<'de> for UnitVariantAccess {
     where
         V: Visitor<'de>,
     {
-        Err(de::Error::custom("path params do not support struct enum variants"))
+        Err(de::Error::custom(
+            "path params do not support struct enum variants",
+        ))
     }
 }
 
@@ -479,7 +485,10 @@ impl<'de> MapAccess<'de> for MapDeserializer<'de> {
     where
         V: DeserializeSeed<'de>,
     {
-        let value = self.value.take().expect("next_value_seed called before next_key_seed");
+        let value = self
+            .value
+            .take()
+            .expect("next_value_seed called before next_key_seed");
         seed.deserialize(ValueDeserializer { value })
     }
 }

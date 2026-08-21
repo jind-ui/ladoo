@@ -311,7 +311,10 @@ impl Cors {
             self.set_origin_header(resp, origin);
         }
 
-        if self.credentials() && !resp.headers().contains_key("access-control-allow-credentials")
+        if self.credentials()
+            && !resp
+                .headers()
+                .contains_key("access-control-allow-credentials")
         {
             resp.set_header("access-control-allow-credentials", "true");
         }

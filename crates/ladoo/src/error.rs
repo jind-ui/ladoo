@@ -236,9 +236,7 @@ impl Error {
                 .iter()
                 .map(|err| format!("<li>{}</li>", escape_html(err)))
                 .collect();
-            format!(
-                "<div class=\"chain\"><h3>Error Chain</h3><ul>{items}</ul></div>"
-            )
+            format!("<div class=\"chain\"><h3>Error Chain</h3><ul>{items}</ul></div>")
         };
 
         let html = format!(
@@ -283,8 +281,10 @@ h1 {{ color: #e74c3c; font-size: 2em; margin-bottom: 0.2em; }}
 
     fn error_chain(&self) -> Vec<String> {
         let mut chain = Vec::new();
-        let mut current: Option<&dyn std::error::Error> =
-            self.source.as_ref().map(|s| s.as_ref() as &dyn std::error::Error);
+        let mut current: Option<&dyn std::error::Error> = self
+            .source
+            .as_ref()
+            .map(|s| s.as_ref() as &dyn std::error::Error);
         while let Some(err) = current {
             chain.push(err.to_string());
             current = err.source();
@@ -303,11 +303,7 @@ h1 {{ color: #e74c3c; font-size: 2em; margin-bottom: 0.2em; }}
             http::header::CONTENT_TYPE,
             http::HeaderValue::from_static("application/json"),
         );
-        Response::new(
-            self.status,
-            headers,
-            Bytes::from(body.to_string()),
-        )
+        Response::new(self.status, headers, Bytes::from(body.to_string()))
     }
 
     #[cfg(not(feature = "json"))]
@@ -399,8 +395,8 @@ pub(crate) mod tests {
 
     #[test]
     fn with_detail_adds_detail() {
-        let err = Error::not_found("user not found")
-            .with_detail("user_id=42 was not in the database");
+        let err =
+            Error::not_found("user not found").with_detail("user_id=42 was not in the database");
         assert_eq!(err.detail(), Some("user_id=42 was not in the database"));
     }
 
@@ -460,8 +456,7 @@ pub(crate) mod tests {
     fn question_mark_converts_std_error() {
         fn fallible() -> Result<()> {
             let invalid_utf8: Vec<u8> = vec![0xFF];
-            let _: String = std::str::from_utf8(&invalid_utf8)
-                .map(|s| s.to_string())?;
+            let _: String = std::str::from_utf8(&invalid_utf8).map(|s| s.to_string())?;
             Ok(())
         }
         let err = fallible().unwrap_err();
@@ -497,7 +492,9 @@ pub(crate) mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     pub(crate) fn lock_env() -> std::sync::MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     #[test]
@@ -518,8 +515,7 @@ pub(crate) mod tests {
     fn error_into_response_dev_mode_includes_detail() {
         let _guard = lock_env();
         std::env::set_var("LADOO_ENV", "development");
-        let err = Error::internal("server error")
-            .with_detail("connection pool exhausted");
+        let err = Error::internal("server error").with_detail("connection pool exhausted");
         let resp = err.into_response();
         let body = std::str::from_utf8(resp.body_bytes()).unwrap();
         assert!(body.contains("connection pool exhausted"));
@@ -566,8 +562,7 @@ pub(crate) mod tests {
     fn error_into_response_prod_mode_hides_detail() {
         let _guard = lock_env();
         std::env::set_var("LADOO_ENV", "production");
-        let err = Error::internal("server error")
-            .with_detail("secret database info");
+        let err = Error::internal("server error").with_detail("secret database info");
         let resp = err.into_response();
         std::env::remove_var("LADOO_ENV");
         let body = std::str::from_utf8(resp.body_bytes()).unwrap();

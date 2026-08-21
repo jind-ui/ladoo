@@ -55,12 +55,16 @@ pub struct SecureHeaders {
 impl Default for SecureHeaders {
     fn default() -> Self {
         Self {
-            hsts: Some(HeaderValue::from_static("max-age=63072000; includeSubDomains")),
+            hsts: Some(HeaderValue::from_static(
+                "max-age=63072000; includeSubDomains",
+            )),
             x_content_type_options: Some(HeaderValue::from_static("nosniff")),
             x_frame_options: Some(HeaderValue::from_static("DENY")),
             content_security_policy: Some(HeaderValue::from_static("default-src 'self'")),
             referrer_policy: Some(HeaderValue::from_static("strict-origin-when-cross-origin")),
-            permissions_policy: Some(HeaderValue::from_static("camera=(), microphone=(), geolocation=()")),
+            permissions_policy: Some(HeaderValue::from_static(
+                "camera=(), microphone=(), geolocation=()",
+            )),
         }
     }
 }
@@ -128,9 +132,15 @@ impl Middleware for SecureHeaders {
     ) -> Pin<Box<dyn Future<Output = Result<Response>> + Send>> {
         let headers = [
             ("strict-transport-security", self.hsts.clone()),
-            ("x-content-type-options", self.x_content_type_options.clone()),
+            (
+                "x-content-type-options",
+                self.x_content_type_options.clone(),
+            ),
             ("x-frame-options", self.x_frame_options.clone()),
-            ("content-security-policy", self.content_security_policy.clone()),
+            (
+                "content-security-policy",
+                self.content_security_policy.clone(),
+            ),
             ("referrer-policy", self.referrer_policy.clone()),
             ("permissions-policy", self.permissions_policy.clone()),
         ];
@@ -156,12 +166,38 @@ mod tests {
     #[test]
     fn default_sets_all_six_headers() {
         let sh = SecureHeaders::default();
-        assert_eq!(sh.hsts.as_ref().unwrap().to_str().unwrap(), "max-age=63072000; includeSubDomains");
-        assert_eq!(sh.x_content_type_options.as_ref().unwrap().to_str().unwrap(), "nosniff");
-        assert_eq!(sh.x_frame_options.as_ref().unwrap().to_str().unwrap(), "DENY");
-        assert_eq!(sh.content_security_policy.as_ref().unwrap().to_str().unwrap(), "default-src 'self'");
-        assert_eq!(sh.referrer_policy.as_ref().unwrap().to_str().unwrap(), "strict-origin-when-cross-origin");
-        assert_eq!(sh.permissions_policy.as_ref().unwrap().to_str().unwrap(), "camera=(), microphone=(), geolocation=()");
+        assert_eq!(
+            sh.hsts.as_ref().unwrap().to_str().unwrap(),
+            "max-age=63072000; includeSubDomains"
+        );
+        assert_eq!(
+            sh.x_content_type_options
+                .as_ref()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "nosniff"
+        );
+        assert_eq!(
+            sh.x_frame_options.as_ref().unwrap().to_str().unwrap(),
+            "DENY"
+        );
+        assert_eq!(
+            sh.content_security_policy
+                .as_ref()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "default-src 'self'"
+        );
+        assert_eq!(
+            sh.referrer_policy.as_ref().unwrap().to_str().unwrap(),
+            "strict-origin-when-cross-origin"
+        );
+        assert_eq!(
+            sh.permissions_policy.as_ref().unwrap().to_str().unwrap(),
+            "camera=(), microphone=(), geolocation=()"
+        );
     }
 
     #[test]
@@ -174,7 +210,10 @@ mod tests {
     #[test]
     fn builder_overrides_hsts() {
         let sh = SecureHeaders::new().hsts("max-age=31536000");
-        assert_eq!(sh.hsts.as_ref().unwrap().to_str().unwrap(), "max-age=31536000");
+        assert_eq!(
+            sh.hsts.as_ref().unwrap().to_str().unwrap(),
+            "max-age=31536000"
+        );
     }
 
     #[test]
@@ -187,7 +226,11 @@ mod tests {
     fn builder_overrides_x_content_type_options() {
         let sh = SecureHeaders::new().x_content_type_options("custom");
         assert_eq!(
-            sh.x_content_type_options.as_ref().unwrap().to_str().unwrap(),
+            sh.x_content_type_options
+                .as_ref()
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "custom"
         );
     }
@@ -196,7 +239,11 @@ mod tests {
     fn builder_overrides_content_security_policy() {
         let sh = SecureHeaders::new().content_security_policy("default-src 'none'");
         assert_eq!(
-            sh.content_security_policy.as_ref().unwrap().to_str().unwrap(),
+            sh.content_security_policy
+                .as_ref()
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "default-src 'none'"
         );
     }
@@ -208,10 +255,20 @@ mod tests {
             .referrer_policy("no-referrer")
             .permissions_policy(None);
         assert_eq!(sh.hsts.as_ref().unwrap().to_str().unwrap(), "max-age=0");
-        assert_eq!(sh.referrer_policy.as_ref().unwrap().to_str().unwrap(), "no-referrer");
+        assert_eq!(
+            sh.referrer_policy.as_ref().unwrap().to_str().unwrap(),
+            "no-referrer"
+        );
         assert!(sh.permissions_policy.is_none());
         // Untouched headers keep defaults
-        assert_eq!(sh.x_content_type_options.as_ref().unwrap().to_str().unwrap(), "nosniff");
+        assert_eq!(
+            sh.x_content_type_options
+                .as_ref()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "nosniff"
+        );
     }
 
     use crate::app::App;
@@ -226,12 +283,24 @@ mod tests {
             .into_client();
         let resp = client.get("/").send().await;
         assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(resp.header("strict-transport-security"), Some("max-age=63072000; includeSubDomains"));
+        assert_eq!(
+            resp.header("strict-transport-security"),
+            Some("max-age=63072000; includeSubDomains")
+        );
         assert_eq!(resp.header("x-content-type-options"), Some("nosniff"));
         assert_eq!(resp.header("x-frame-options"), Some("DENY"));
-        assert_eq!(resp.header("content-security-policy"), Some("default-src 'self'"));
-        assert_eq!(resp.header("referrer-policy"), Some("strict-origin-when-cross-origin"));
-        assert_eq!(resp.header("permissions-policy"), Some("camera=(), microphone=(), geolocation=()"));
+        assert_eq!(
+            resp.header("content-security-policy"),
+            Some("default-src 'self'")
+        );
+        assert_eq!(
+            resp.header("referrer-policy"),
+            Some("strict-origin-when-cross-origin")
+        );
+        assert_eq!(
+            resp.header("permissions-policy"),
+            Some("camera=(), microphone=(), geolocation=()")
+        );
     }
 
     #[tokio::test]
@@ -252,7 +321,10 @@ mod tests {
             .into_client();
         let resp = client.get("/").send().await;
         // Handler (via inner middleware) set CSP — SecureHeaders must not overwrite
-        assert_eq!(resp.header("content-security-policy"), Some("default-src 'none'"));
+        assert_eq!(
+            resp.header("content-security-policy"),
+            Some("default-src 'none'")
+        );
         // Other defaults still applied
         assert_eq!(resp.header("x-frame-options"), Some("DENY"));
     }

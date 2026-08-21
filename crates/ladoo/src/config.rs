@@ -255,12 +255,11 @@ pub fn load_toml_from(
 
     let default_path = base.join("config/default.toml");
     if default_path.exists() {
-        let content = std::fs::read_to_string(&default_path).map_err(|e| {
-            ConfigError::FileReadError {
+        let content =
+            std::fs::read_to_string(&default_path).map_err(|e| ConfigError::FileReadError {
                 path: default_path.clone(),
                 source: e,
-            }
-        })?;
+            })?;
         let parsed: toml::Table =
             toml::from_str(&content).map_err(|e| ConfigError::FileParseError {
                 path: default_path,

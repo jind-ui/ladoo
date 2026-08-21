@@ -50,10 +50,7 @@ impl ValidationErrors {
 
     /// Append an error message to a field.
     pub fn add(&mut self, field: impl Into<String>, message: impl Into<String>) {
-        self.0
-            .entry(field.into())
-            .or_default()
-            .push(message.into());
+        self.0.entry(field.into()).or_default().push(message.into());
     }
 
     /// Returns `true` if no errors have been added.
@@ -104,7 +101,9 @@ impl IntoResponse for ValidationErrors {
                 (
                     k.clone(),
                     serde_json::Value::Array(
-                        v.iter().map(|m| serde_json::Value::String(m.clone())).collect(),
+                        v.iter()
+                            .map(|m| serde_json::Value::String(m.clone()))
+                            .collect(),
                     ),
                 )
             })
@@ -216,9 +215,7 @@ impl ValidationErrors {
                             .message
                             .as_ref()
                             .map(|m| m.to_string())
-                            .unwrap_or_else(|| {
-                                format!("validation failed: {}", error.code)
-                            });
+                            .unwrap_or_else(|| format!("validation failed: {}", error.code));
                         result.add(full_field.clone(), message);
                     }
                 }
@@ -239,8 +236,7 @@ impl ValidationErrors {
 #[cfg(feature = "validation")]
 impl<T: validator::Validate> Validate for T {
     fn validate(&self) -> Result<(), ValidationErrors> {
-        validator::Validate::validate(self)
-            .map_err(ValidationErrors::from_validator_errors)
+        validator::Validate::validate(self).map_err(ValidationErrors::from_validator_errors)
     }
 }
 
@@ -432,14 +428,10 @@ mod tests {
         errors.add("email", "must be a valid email address");
         errors.add("age", "must be greater than or equal to 0");
         let resp = errors.into_response();
-        let body: serde_json::Value =
-            serde_json::from_slice(resp.body_bytes()).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert_eq!(body["error"], "Validation failed");
         assert_eq!(body["status"], 422);
-        assert_eq!(
-            body["fields"]["email"][0],
-            "must be a valid email address"
-        );
+        assert_eq!(body["fields"]["email"][0], "must be a valid email address");
         assert_eq!(
             body["fields"]["age"][0],
             "must be greater than or equal to 0"
@@ -452,21 +444,26 @@ mod tests {
         let errors = ValidationErrors::new();
         let resp = errors.into_response();
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let body: serde_json::Value =
-            serde_json::from_slice(resp.body_bytes()).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert_eq!(body["fields"], serde_json::json!({}));
     }
 
     #[test]
     fn manual_validate_impl_ok() {
-        struct MyInput { value: i32 }
+        struct MyInput {
+            value: i32,
+        }
         impl Validate for MyInput {
             fn validate(&self) -> Result<(), ValidationErrors> {
                 let mut errors = ValidationErrors::new();
                 if self.value < 0 {
                     errors.add("value", "must be non-negative");
                 }
-                if errors.is_empty() { Ok(()) } else { Err(errors) }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors)
+                }
             }
         }
         assert!(MyInput { value: 5 }.validate().is_ok());
@@ -474,14 +471,20 @@ mod tests {
 
     #[test]
     fn manual_validate_impl_err() {
-        struct MyInput { value: i32 }
+        struct MyInput {
+            value: i32,
+        }
         impl Validate for MyInput {
             fn validate(&self) -> Result<(), ValidationErrors> {
                 let mut errors = ValidationErrors::new();
                 if self.value < 0 {
                     errors.add("value", "must be non-negative");
                 }
-                if errors.is_empty() { Ok(()) } else { Err(errors) }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors)
+                }
             }
         }
         let result = MyInput { value: -1 }.validate();
@@ -552,8 +555,7 @@ mod tests {
     fn valid_json_passes_through() {
         let body = br#"{"name":"Alice","email":"alice@example.com"}"#;
         let mut req = json_request(body);
-        let result =
-            Valid::<super::super::Json<CreateUser>>::from_request(&mut req);
+        let result = Valid::<super::super::Json<CreateUser>>::from_request(&mut req);
         assert!(result.is_ok());
         let Valid(json) = result.unwrap();
         assert_eq!(json.name, "Alice");
@@ -564,8 +566,7 @@ mod tests {
     fn invalid_json_returns_422() {
         let body = br#"{"name":"","email":"not-an-email"}"#;
         let mut req = json_request(body);
-        let result =
-            Valid::<super::super::Json<CreateUser>>::from_request(&mut req);
+        let result = Valid::<super::super::Json<CreateUser>>::from_request(&mut req);
         assert!(result.is_err());
         let resp = result.unwrap_err();
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
@@ -576,11 +577,8 @@ mod tests {
     fn invalid_json_response_has_field_errors() {
         let body = br#"{"name":"","email":"bad"}"#;
         let mut req = json_request(body);
-        let resp =
-            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
-                .unwrap_err();
-        let json: serde_json::Value =
-            serde_json::from_slice(resp.body_bytes()).unwrap();
+        let resp = Valid::<super::super::Json<CreateUser>>::from_request(&mut req).unwrap_err();
+        let json: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert!(json["fields"]["name"].is_array());
         assert!(json["fields"]["email"].is_array());
     }
@@ -590,11 +588,8 @@ mod tests {
     fn multiple_field_errors_in_response() {
         let body = br#"{"name":"","email":"bad"}"#;
         let mut req = json_request(body);
-        let resp =
-            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
-                .unwrap_err();
-        let json: serde_json::Value =
-            serde_json::from_slice(resp.body_bytes()).unwrap();
+        let resp = Valid::<super::super::Json<CreateUser>>::from_request(&mut req).unwrap_err();
+        let json: serde_json::Value = serde_json::from_slice(resp.body_bytes()).unwrap();
         assert_eq!(json["fields"]["name"][0], "must not be empty");
         assert_eq!(json["fields"]["email"][0], "must be a valid email address");
     }
@@ -604,20 +599,15 @@ mod tests {
     fn malformed_json_still_returns_400_not_422() {
         let body = b"not valid json at all";
         let mut req = json_request(body);
-        let resp =
-            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
-                .unwrap_err();
+        let resp = Valid::<super::super::Json<CreateUser>>::from_request(&mut req).unwrap_err();
         assert_eq!(resp.status(), http::StatusCode::BAD_REQUEST);
     }
 
     #[cfg(feature = "json")]
     #[test]
     fn wrong_content_type_still_returns_415() {
-        let mut req =
-            Request::test_with_body(Method::POST, "/users", b"some body");
-        let resp =
-            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
-                .unwrap_err();
+        let mut req = Request::test_with_body(Method::POST, "/users", b"some body");
+        let resp = Valid::<super::super::Json<CreateUser>>::from_request(&mut req).unwrap_err();
         assert_eq!(resp.status(), http::StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
@@ -626,9 +616,7 @@ mod tests {
     fn valid_deref_accesses_inner() {
         let body = br#"{"name":"Bob","email":"bob@example.com"}"#;
         let mut req = json_request(body);
-        let valid =
-            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
-                .unwrap();
+        let valid = Valid::<super::super::Json<CreateUser>>::from_request(&mut req).unwrap();
         assert_eq!(valid.name, "Bob");
     }
 
@@ -637,9 +625,7 @@ mod tests {
     fn valid_destructure_pattern() {
         let body = br#"{"name":"Charlie","email":"c@example.com"}"#;
         let mut req = json_request(body);
-        let Valid(json) =
-            Valid::<super::super::Json<CreateUser>>::from_request(&mut req)
-                .unwrap();
+        let Valid(json) = Valid::<super::super::Json<CreateUser>>::from_request(&mut req).unwrap();
         assert_eq!(json.name, "Charlie");
     }
 
@@ -656,13 +642,16 @@ mod tests {
                 if self.q.is_empty() {
                     errors.add("q", "must not be empty");
                 }
-                if errors.is_empty() { Ok(()) } else { Err(errors) }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors)
+                }
             }
         }
 
         let mut req = Request::test(Method::GET, "/search?q=rust");
-        let result =
-            Valid::<super::super::Query<Search>>::from_request(&mut req);
+        let result = Valid::<super::super::Query<Search>>::from_request(&mut req);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().q, "rust");
     }
@@ -680,14 +669,16 @@ mod tests {
                 if self.q.is_empty() {
                     errors.add("q", "must not be empty");
                 }
-                if errors.is_empty() { Ok(()) } else { Err(errors) }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors)
+                }
             }
         }
 
         let mut req = Request::test(Method::GET, "/search?q=");
-        let resp =
-            Valid::<super::super::Query<Search>>::from_request(&mut req)
-                .unwrap_err();
+        let resp = Valid::<super::super::Query<Search>>::from_request(&mut req).unwrap_err();
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
@@ -696,8 +687,7 @@ mod tests {
     fn valid_only_validates_once() {
         let body = br#"{"name":"Alice","email":"a@b.com"}"#;
         let mut req = json_request(body);
-        let result =
-            Valid::<super::super::Json<CreateUser>>::from_request(&mut req);
+        let result = Valid::<super::super::Json<CreateUser>>::from_request(&mut req);
         assert!(result.is_ok());
     }
 
@@ -723,8 +713,8 @@ mod tests {
         // trait is in scope; if both Ladoo's blanket-impl `Validate` and
         // `validator::Validate` were in scope here, that call would be
         // ambiguous for any type covered by the blanket impl.
-        use super::{Valid, ValidationErrors};
         use super::super::super::FromRequest;
+        use super::{Valid, ValidationErrors};
         use http::StatusCode;
 
         #[test]
@@ -756,14 +746,14 @@ mod tests {
                 name: String,
             }
 
-            let input = Input { name: String::new() };
+            let input = Input {
+                name: String::new(),
+            };
             let result = validator::Validate::validate(&input);
             let ve = ValidationErrors::from_validator_errors(result.unwrap_err());
-            assert!(
-                ve.field_errors()["name"]
-                    .iter()
-                    .any(|m| m.contains("name is required")),
-            );
+            assert!(ve.field_errors()["name"]
+                .iter()
+                .any(|m| m.contains("name is required")),);
         }
 
         #[test]
@@ -774,7 +764,9 @@ mod tests {
                 email: String,
             }
 
-            let input = Input { email: "bad".to_string() };
+            let input = Input {
+                email: "bad".to_string(),
+            };
             let result = validator::Validate::validate(&input);
             let ve = ValidationErrors::from_validator_errors(result.unwrap_err());
             let msgs = &ve.field_errors()["email"];
@@ -793,9 +785,7 @@ mod tests {
 
             let body = br#"{"name":"Alice","email":"alice@example.com"}"#;
             let mut req = super::json_request(body);
-            let result = Valid::<super::super::super::Json<CreateUser>>::from_request(
-                &mut req,
-            );
+            let result = Valid::<super::super::super::Json<CreateUser>>::from_request(&mut req);
             assert!(result.is_ok());
         }
 
@@ -811,9 +801,7 @@ mod tests {
 
             let body = br#"{"name":"","email":"bad"}"#;
             let mut req = super::json_request(body);
-            let result = Valid::<super::super::super::Json<CreateUser>>::from_request(
-                &mut req,
-            );
+            let result = Valid::<super::super::super::Json<CreateUser>>::from_request(&mut req);
             assert!(result.is_err());
             assert_eq!(
                 result.unwrap_err().status(),
@@ -845,7 +833,9 @@ mod tests {
 
             let input = User {
                 name: String::new(),
-                address: Address { city: String::new() },
+                address: Address {
+                    city: String::new(),
+                },
             };
             let result = validator::Validate::validate(&input);
             let ve = ValidationErrors::from_validator_errors(result.unwrap_err());
@@ -879,8 +869,12 @@ mod tests {
 
             let input = Order {
                 items: vec![
-                    Item { name: "widget".to_string() },
-                    Item { name: String::new() },
+                    Item {
+                        name: "widget".to_string(),
+                    },
+                    Item {
+                        name: String::new(),
+                    },
                 ],
             };
             let result = validator::Validate::validate(&input);

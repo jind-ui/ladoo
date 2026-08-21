@@ -79,8 +79,7 @@ impl<C: DeserializeOwned + Clone + Send + Sync + 'static> JwtAuth<C> {
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_required_spec_claims(&["exp"]);
         Self {
-            decoding_key: DecodingKey::from_rsa_pem(pem)
-                .expect("invalid RSA PEM key"),
+            decoding_key: DecodingKey::from_rsa_pem(pem).expect("invalid RSA PEM key"),
             validation,
             _claims: PhantomData,
         }
@@ -92,7 +91,9 @@ impl<C: DeserializeOwned + Clone + Send + Sync + 'static> JwtAuth<C> {
     /// are rejected. Without this call, `iss` is ignored entirely.
     pub fn with_issuer(mut self, issuer: &str) -> Self {
         self.validation.set_issuer(&[issuer]);
-        self.validation.required_spec_claims.insert("iss".to_string());
+        self.validation
+            .required_spec_claims
+            .insert("iss".to_string());
         self
     }
 
@@ -102,7 +103,9 @@ impl<C: DeserializeOwned + Clone + Send + Sync + 'static> JwtAuth<C> {
     /// are rejected. Without this call, `aud` is ignored entirely.
     pub fn with_audience(mut self, audience: &str) -> Self {
         self.validation.set_audience(&[audience]);
-        self.validation.required_spec_claims.insert("aud".to_string());
+        self.validation
+            .required_spec_claims
+            .insert("aud".to_string());
         self
     }
 
@@ -144,17 +147,15 @@ impl<C: DeserializeOwned + Clone + Send + Sync + 'static> AuthProvider for JwtAu
             .strip_prefix("Bearer ")
             .ok_or_else(|| AuthError::Invalid("Expected 'Bearer <token>' format".into()))?;
 
-        let token_data =
-            jsonwebtoken::decode::<C>(token, &self.decoding_key, &self.validation).map_err(
-                |e| {
-                    #[cfg(feature = "logging")]
-                    tracing::debug!(error = %e, "JWT validation failed");
-                    match e.kind() {
-                        jsonwebtoken::errors::ErrorKind::ExpiredSignature => AuthError::Expired,
-                        _ => AuthError::Invalid("Invalid token".into()),
-                    }
-                },
-            )?;
+        let token_data = jsonwebtoken::decode::<C>(token, &self.decoding_key, &self.validation)
+            .map_err(|e| {
+                #[cfg(feature = "logging")]
+                tracing::debug!(error = %e, "JWT validation failed");
+                match e.kind() {
+                    jsonwebtoken::errors::ErrorKind::ExpiredSignature => AuthError::Expired,
+                    _ => AuthError::Invalid("Invalid token".into()),
+                }
+            })?;
 
         Ok(token_data.claims)
     }
@@ -200,7 +201,10 @@ mod tests {
         }
         encode(
             &Header::default(),
-            &ExpiredClaims { sub: "alice".into(), exp: 0 },
+            &ExpiredClaims {
+                sub: "alice".into(),
+                exp: 0,
+            },
             &EncodingKey::from_secret(secret),
         )
         .unwrap()
@@ -216,7 +220,12 @@ mod tests {
 
     fn make_token_with_iss_aud(claims: &ClaimsWithIssAud, secret: &[u8]) -> String {
         use jsonwebtoken::{encode, EncodingKey, Header};
-        encode(&Header::default(), claims, &EncodingKey::from_secret(secret)).unwrap()
+        encode(
+            &Header::default(),
+            claims,
+            &EncodingKey::from_secret(secret),
+        )
+        .unwrap()
     }
 
     #[tokio::test]

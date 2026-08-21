@@ -405,7 +405,12 @@ mod tests {
         let resp = middleware::run_middleware_chain(&mw_vec, handler, ctx)
             .await
             .unwrap();
-        let id = resp.headers().get("x-request-id").unwrap().to_str().unwrap();
+        let id = resp
+            .headers()
+            .get("x-request-id")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(!id.is_empty());
         assert!(uuid::Uuid::parse_str(id).is_ok());
     }
@@ -423,7 +428,12 @@ mod tests {
         let resp = middleware::run_middleware_chain(&mw_vec, handler, ctx)
             .await
             .unwrap();
-        let id = resp.headers().get("x-request-id").unwrap().to_str().unwrap();
+        let id = resp
+            .headers()
+            .get("x-request-id")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert_eq!(id, "custom-123");
     }
 

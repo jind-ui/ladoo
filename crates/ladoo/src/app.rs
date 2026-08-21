@@ -785,8 +785,15 @@ impl App {
             let (router, state, middleware, shutdown_timeout, shutdown_hooks, body_limit) =
                 self.into_parts();
             #[cfg(feature = "tls")]
-            let (router, state, middleware, shutdown_timeout, shutdown_hooks, body_limit, tls_config) =
-                self.into_parts();
+            let (
+                router,
+                state,
+                middleware,
+                shutdown_timeout,
+                shutdown_hooks,
+                body_limit,
+                tls_config,
+            ) = self.into_parts();
 
             #[cfg(feature = "tls")]
             let tls_acceptor = tls_config.map(|c| c.build_acceptor());
@@ -1168,21 +1175,20 @@ mod tests {
 
     #[test]
     fn on_shutdown_stores_hooks() {
-        let app = App::new()
-            .on_shutdown(|| async {})
-            .on_shutdown(|| async {});
+        let app = App::new().on_shutdown(|| async {}).on_shutdown(|| async {});
         let (_, _, _, _, hooks, _) = test_into_parts(app);
         assert_eq!(hooks.len(), 2);
     }
 
     #[test]
     fn use_mw_chains() {
-        async fn noop(ctx: crate::context::Context, next: crate::middleware::Next) -> crate::error::Result<crate::response::Response> {
+        async fn noop(
+            ctx: crate::context::Context,
+            next: crate::middleware::Next,
+        ) -> crate::error::Result<crate::response::Response> {
             next.run(ctx).await
         }
-        let app = App::new()
-            .use_mw(noop)
-            .get("/", |_req: Request| "hello");
+        let app = App::new().use_mw(noop).get("/", |_req: Request| "hello");
         let _ = test_into_parts(app);
     }
 

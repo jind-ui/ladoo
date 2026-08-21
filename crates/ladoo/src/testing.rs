@@ -633,9 +633,7 @@ mod tests {
         }
 
         let client = App::test()
-            .get("/search", |req: Request| {
-                format!("path={}", req.uri())
-            })
+            .get("/search", |req: Request| format!("path={}", req.uri()))
             .into_client();
         let resp = client
             .get("/search")
@@ -652,9 +650,7 @@ mod tests {
 
     #[tokio::test]
     async fn body_bytes_returns_raw() {
-        let client = App::test()
-            .get("/", |_req: Request| "raw")
-            .into_client();
+        let client = App::test().get("/", |_req: Request| "raw").into_client();
         let resp = client.get("/").send().await;
         assert_eq!(resp.body_bytes(), b"raw");
     }
@@ -708,10 +704,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_404() {
-        let server = App::test()
-            .get("/", |_req: Request| "home")
-            .spawn()
-            .await;
+        let server = App::test().get("/", |_req: Request| "home").spawn().await;
         let resp = server.get("/missing").send().await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
