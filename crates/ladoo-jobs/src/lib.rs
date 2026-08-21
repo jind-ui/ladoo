@@ -14,6 +14,7 @@
 //! ```
 
 pub mod error;
+pub mod outbox;
 pub mod registry;
 pub mod scheduler;
 pub mod store;
@@ -28,7 +29,7 @@ pub mod sqlite;
 pub use error::JobStoreError;
 pub use registry::{JobRegistry, PersistentJob};
 pub use scheduler::{CronError, CronScheduler};
-pub use store::{JobId, JobStatus, JobStore, NewJob, QueuedJob};
+pub use store::{JobId, JobStatus, JobStore, JobStoreExt, NewJob, QueuedJob};
 pub use worker::Worker;
 
 #[cfg(feature = "postgres")]
@@ -36,3 +37,9 @@ pub use postgres::PostgresStore;
 
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
+
+#[cfg(feature = "postgres")]
+pub use outbox::enqueue_outbox_pg;
+
+#[cfg(feature = "sqlite")]
+pub use outbox::enqueue_outbox_sqlite;

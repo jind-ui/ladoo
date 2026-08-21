@@ -1,9 +1,12 @@
 //! Core types and the [`JobStore`] trait.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
 use crate::error::JobStoreError;
+use crate::registry::PersistentJob;
 
 /// Unique identifier for a queued job.
 pub type JobId = i64;
@@ -119,6 +122,59 @@ pub trait JobStore: Send + Sync + 'static {
     /// Run schema migrations (create tables and indexes).
     async fn migrate(&self) -> Result<(), JobStoreError>;
 }
+
+/// Convenience enqueue methods for any [`JobStore`].
+///
+/// These build a [`NewJob`] from a [`PersistentJob`] and delegate to
+/// [`JobStore::push`]. Implemented as a blanket extension trait so every
+/// `JobStore` gets `enqueue`, `enqueue_delayed`, and `enqueue_at` for free.
+#[async_trait]
+pub trait JobStoreExt: JobStore {
+    /// Enqueue a job for immediate execution.
+    async fn enqueue<J: PersistentJob>(&self, job: &J) -> Result<JobId, JobStoreError> {
+        let new_job = NewJob {
+            name: J::name().to_string(),
+            payload: serde_json::to_value(job).map_err(JobStoreError::Serialization)?,
+            max_retries: J::max_retries(),
+            run_at: Utc::now(),
+        };
+        self.push(new_job).await
+    }
+
+    /// Enqueue a job to run after a delay.
+    async fn enqueue_delayed<J: PersistentJob>(
+        &self,
+        job: &J,
+        delay: Duration,
+    ) -> Result<JobId, JobStoreError> {
+        let run_at = Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default();
+        let new_job = NewJob {
+            name: J::name().to_string(),
+            payload: serde_json::to_value(job).map_err(JobStoreError::Serialization)?,
+            max_retries: J::max_retries(),
+            run_at,
+        };
+        self.push(new_job).await
+    }
+
+    /// Enqueue a job to run at a specific time.
+    async fn enqueue_at<J: PersistentJob>(
+        &self,
+        job: &J,
+        at: DateTime<Utc>,
+    ) -> Result<JobId, JobStoreError> {
+        let new_job = NewJob {
+            name: J::name().to_string(),
+            payload: serde_json::to_value(job).map_err(JobStoreError::Serialization)?,
+            max_retries: J::max_retries(),
+            run_at: at,
+        };
+        self.push(new_job).await
+    }
+}
+
+/// Blanket implementation — every [`JobStore`] automatically gets [`JobStoreExt`].
+impl<S: JobStore> JobStoreExt for S {}
 
 #[cfg(test)]
 mod tests {

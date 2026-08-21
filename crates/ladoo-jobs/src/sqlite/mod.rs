@@ -363,4 +363,83 @@ mod tests {
         let store = test_store().await;
         assert!(store.subscribe().is_none());
     }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct GreetJob {
+        name: String,
+    }
+
+    impl crate::registry::PersistentJob for GreetJob {
+        fn name() -> &'static str {
+            "greet_job"
+        }
+        fn handle(
+            &self,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>,
+        > {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn enqueue_pushes_job_for_immediate_execution() {
+        use crate::store::JobStoreExt;
+
+        let store = test_store().await;
+        let id = store
+            .enqueue(&GreetJob {
+                name: "ada".into(),
+            })
+            .await
+            .unwrap();
+
+        let claimed = store.claim(10).await.unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].id, id);
+        assert_eq!(claimed[0].name, "greet_job");
+        assert_eq!(claimed[0].payload, serde_json::json!({"name": "ada"}));
+    }
+
+    #[tokio::test]
+    async fn enqueue_delayed_schedules_job_in_the_future() {
+        use crate::store::JobStoreExt;
+
+        let store = test_store().await;
+        store
+            .enqueue_delayed(
+                &GreetJob {
+                    name: "grace".into(),
+                },
+                std::time::Duration::from_secs(3600),
+            )
+            .await
+            .unwrap();
+
+        // Not yet claimable — run_at is an hour from now.
+        let claimed = store.claim(10).await.unwrap();
+        assert!(claimed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enqueue_at_schedules_job_for_specific_time() {
+        use crate::store::JobStoreExt;
+
+        let store = test_store().await;
+        let past = Utc::now() - chrono::Duration::seconds(1);
+        let id = store
+            .enqueue_at(
+                &GreetJob {
+                    name: "linus".into(),
+                },
+                past,
+            )
+            .await
+            .unwrap();
+
+        // run_at is in the past, so it should be immediately claimable.
+        let claimed = store.claim(10).await.unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].id, id);
+    }
 }
