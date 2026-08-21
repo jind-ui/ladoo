@@ -14,7 +14,9 @@
 //! ```
 
 pub mod error;
+pub mod registry;
 pub mod store;
+pub mod worker;
 
 #[cfg(feature = "postgres")]
 pub mod postgres;
@@ -23,7 +25,9 @@ pub mod postgres;
 pub mod sqlite;
 
 pub use error::JobStoreError;
+pub use registry::{JobRegistry, PersistentJob};
 pub use store::{JobId, JobStatus, JobStore, NewJob, QueuedJob};
+pub use worker::Worker;
 
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresStore;
