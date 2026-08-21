@@ -15,6 +15,7 @@
 
 pub mod error;
 pub mod registry;
+pub mod scheduler;
 pub mod store;
 pub mod worker;
 
@@ -26,6 +27,7 @@ pub mod sqlite;
 
 pub use error::JobStoreError;
 pub use registry::{JobRegistry, PersistentJob};
+pub use scheduler::{CronError, CronScheduler};
 pub use store::{JobId, JobStatus, JobStore, NewJob, QueuedJob};
 pub use worker::Worker;
 
