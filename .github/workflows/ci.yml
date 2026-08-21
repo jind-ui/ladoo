@@ -31,9 +31,9 @@ jobs:
       - name: Run tests
         run: |
           case "${{ matrix.features }}" in
-            default)            cargo test -p ladoo -p ladoo-macros ;;
-            no-default-features) cargo test -p ladoo --no-default-features ;;
-            all-features)       cargo test -p ladoo -p ladoo-macros --all-features ;;
+            default)            cargo test -p ladoo -p ladoo-macros -p ladoo-jobs ;;
+            no-default-features) cargo test -p ladoo --no-default-features && cargo test -p ladoo-jobs --no-default-features ;;
+            all-features)       cargo test -p ladoo -p ladoo-macros --all-features && cargo test -p ladoo-jobs --all-features ;;
           esac
 
   clippy:
@@ -58,9 +58,9 @@ jobs:
       - name: Run clippy
         run: |
           case "${{ matrix.features }}" in
-            default)            cargo clippy -p ladoo -p ladoo-macros -- -D warnings ;;
-            no-default-features) cargo clippy -p ladoo --no-default-features -- -D warnings ;;
-            all-features)       cargo clippy -p ladoo -p ladoo-macros --all-features -- -D warnings ;;
+            default)            cargo clippy -p ladoo -p ladoo-macros -p ladoo-jobs -- -D warnings ;;
+            no-default-features) cargo clippy -p ladoo --no-default-features -- -D warnings && cargo clippy -p ladoo-jobs --no-default-features -- -D warnings ;;
+            all-features)       cargo clippy -p ladoo -p ladoo-macros --all-features -- -D warnings && cargo clippy -p ladoo-jobs --all-features -- -D warnings ;;
           esac
 
   fmt:
