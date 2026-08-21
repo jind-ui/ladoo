@@ -375,9 +375,8 @@ mod tests {
         }
         fn handle(
             &self,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>,
-        > {
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>>
+        {
             Box::pin(async { Ok(()) })
         }
     }
@@ -388,9 +387,7 @@ mod tests {
 
         let store = test_store().await;
         let id = store
-            .enqueue(&GreetJob {
-                name: "ada".into(),
-            })
+            .enqueue(&GreetJob { name: "ada".into() })
             .await
             .unwrap();
 

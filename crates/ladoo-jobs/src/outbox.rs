@@ -8,13 +8,13 @@
 //! order row and enqueue the confirmation email in the same transaction").
 
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
-use chrono::Utc;
-#[cfg(any(feature = "postgres", feature = "sqlite"))]
 use crate::error::JobStoreError;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 use crate::registry::PersistentJob;
 #[cfg(any(feature = "postgres", feature = "sqlite"))]
 use crate::store::JobId;
+#[cfg(any(feature = "postgres", feature = "sqlite"))]
+use chrono::Utc;
 
 /// Enqueue a job within a Postgres transaction.
 ///

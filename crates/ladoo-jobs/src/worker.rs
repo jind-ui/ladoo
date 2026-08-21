@@ -313,8 +313,7 @@ mod tests {
         store.notify = Some(notify_rx);
         let (completed, _failed) = store.outcomes();
 
-        let worker =
-            Worker::new(store, JobRegistry::new()).poll_interval(Duration::from_secs(60));
+        let worker = Worker::new(store, JobRegistry::new()).poll_interval(Duration::from_secs(60));
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let handle = tokio::spawn(async move { worker.run(shutdown_rx).await });

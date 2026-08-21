@@ -357,13 +357,12 @@ mod tests {
 
         store.fail(id, "first error").await.unwrap();
 
-        let row: (String, i32, Option<String>) = sqlx::query_as(
-            "SELECT status, attempts, last_error FROM _ladoo_jobs WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_one(&store.pool)
-        .await
-        .unwrap();
+        let row: (String, i32, Option<String>) =
+            sqlx::query_as("SELECT status, attempts, last_error FROM _ladoo_jobs WHERE id = $1")
+                .bind(id)
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
         assert_eq!(row.0, "pending");
         assert_eq!(row.1, 1);
         assert_eq!(row.2.as_deref(), Some("first error"));
