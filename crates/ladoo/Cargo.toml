@@ -25,7 +25,7 @@ macros = ["dep:ladoo-macros"]
 validation = ["dep:validator"]
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rustls-pki-types"]
 test-server = ["dep:reqwest"]
-ws = ["dep:tokio-tungstenite", "dep:futures-util", "dep:uuid"]
+ws = ["dep:tokio-tungstenite", "dep:futures-util", "dep:uuid", "dep:serde"]
 ws-redis = ["ws", "dep:redis"]
 
 [[example]]
