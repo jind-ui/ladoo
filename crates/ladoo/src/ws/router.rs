@@ -27,11 +27,6 @@ pub struct ChannelRouter {
     routes: Vec<(TopicPattern, Arc<dyn Channel>)>,
 }
 
-// The variant payloads are read by `ChannelRouter::find`, which is
-// itself unused outside tests until the channel dispatch loop (a
-// later task) wires a router into the WebSocket upgrade path — see
-// the ws-channels-workspace task list.
-#[allow(dead_code)]
 enum TopicPattern {
     Exact(String),
     Wildcard(String),
@@ -62,10 +57,6 @@ impl ChannelRouter {
     ///
     /// Routes are checked in registration order and the first match is
     /// returned.
-    // Unused outside tests until the channel dispatch loop (a later
-    // task) looks up the Channel for an incoming topic — see the
-    // ws-channels-workspace task list.
-    #[allow(dead_code)]
     pub(crate) fn find(&self, topic: &str) -> Option<&Arc<dyn Channel>> {
         for (pattern, channel) in &self.routes {
             match pattern {

@@ -42,6 +42,8 @@ pub(crate) async fn run_channel_loop(
         broadcaster: broadcaster.clone(),
     };
 
+    broadcaster.ensure_pubsub_forwarder();
+
     let mut joined_topics: HashSet<String> = HashSet::new();
     let mut broadcast_rx = broadcaster.subscribe_local();
 

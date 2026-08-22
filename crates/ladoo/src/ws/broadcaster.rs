@@ -1,5 +1,6 @@
 //! Broadcaster for delivering messages to WebSocket clients.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::pubsub::{BroadcastEvent, PubSub};
@@ -49,18 +50,19 @@ pub struct Broadcaster {
 struct BroadcasterInner {
     local_tx: tokio::sync::broadcast::Sender<BroadcastEvent>,
     pubsub: Arc<dyn PubSub>,
+    forwarder_started: AtomicBool,
 }
 
 impl Broadcaster {
     /// Create a new Broadcaster with the given PubSub backend.
-    // Unused outside tests until the task that wires `App::channel()` /
-    // `ChannelRouter` constructs a `Broadcaster` and registers it in app
-    // state — see the ws-channels-workspace task list.
-    #[allow(dead_code)]
     pub(crate) fn new(pubsub: Arc<dyn PubSub>) -> Self {
         let (local_tx, _) = tokio::sync::broadcast::channel(1024);
         Self {
-            inner: Arc::new(BroadcasterInner { local_tx, pubsub }),
+            inner: Arc::new(BroadcasterInner {
+                local_tx,
+                pubsub,
+                forwarder_started: AtomicBool::new(false),
+            }),
         }
     }
 
@@ -124,11 +126,45 @@ impl Broadcaster {
     /// Subscribe to the local broadcast channel.
     ///
     /// Used by WS connection tasks to receive broadcast events.
-    // Unused outside tests until the channel connection task (a later
-    // task) calls this to receive events for its subscribed topics.
-    #[allow(dead_code)]
     pub(crate) fn subscribe_local(&self) -> tokio::sync::broadcast::Receiver<BroadcastEvent> {
         self.inner.local_tx.subscribe()
+    }
+
+    /// Start forwarding cross-server `PubSub` messages into this
+    /// server's local delivery channel.
+    ///
+    /// `Broadcaster::new` runs during `App` construction — e.g. inside
+    /// `App::channel_with_pubsub`, called from `fn main()` before
+    /// `App::run` creates the Tokio runtime — so it cannot itself spawn
+    /// the subscription task. Instead, every WS channel connection calls
+    /// this method on setup; it is idempotent (guarded by an atomic
+    /// flag), so the underlying `pubsub.subscribe()` call and forwarding
+    /// task are started exactly once, the first time it runs inside a
+    /// live Tokio runtime.
+    ///
+    /// Without this, a `PubSub` backend configured via
+    /// [`App::channel_with_pubsub`](crate::app::App::channel_with_pubsub)
+    /// (e.g. Redis) would only ever *publish* broadcasts — nothing would
+    /// ever receive the messages published by other server instances.
+    pub(crate) fn ensure_pubsub_forwarder(&self) {
+        if self.inner.forwarder_started.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        let inner = Arc::clone(&self.inner);
+        tokio::spawn(async move {
+            match inner.pubsub.subscribe().await {
+                Ok(mut rx) => {
+                    while let Some(evt) = rx.recv().await {
+                        let _ = inner.local_tx.send(evt);
+                    }
+                }
+                Err(_e) => {
+                    #[cfg(feature = "logging")]
+                    tracing::warn!(error = %_e, "PubSub subscribe failed");
+                }
+            }
+        });
     }
 
     /// Send an event to local subscribers and publish it to the

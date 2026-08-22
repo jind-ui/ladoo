@@ -16,6 +16,8 @@ pub use broadcaster::Broadcaster;
 pub use channel::{Channel, ChannelContext, Reply};
 pub use error::WsError;
 pub use pubsub::{BroadcastEvent, MemoryPubSub, PubSub, PubSubReceiver};
+#[cfg(feature = "ws-redis")]
+pub use pubsub::RedisPubSub;
 pub use router::ChannelRouter;
 pub use socket::{Message, WebSocket};
 pub use upgrade::websocket;
