@@ -1,8 +1,19 @@
-//! HTTP-to-WebSocket upgrade detection and response building.
+//! HTTP-to-WebSocket upgrade detection, response building, and the
+//! [`websocket()`] handler helper.
+
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use http::HeaderMap;
 use http_body_util::Full;
+
+use crate::handler::Handler;
+use crate::request::Request;
+use crate::response::Response;
+
+use super::socket::WebSocket;
 
 /// Check if headers indicate a valid WebSocket upgrade request.
 ///
@@ -27,23 +38,27 @@ pub(crate) fn check_ws_headers(headers: &HeaderMap) -> bool {
 
 /// Returns true if the request is a valid WebSocket upgrade.
 ///
-/// Unused until the router (a later task) wires in upgrade dispatch.
-#[allow(dead_code)]
+/// Checked by [`crate::server::handle_request`] before the request body is
+/// collected, since a WS upgrade needs the raw `Incoming` body stream.
 pub(crate) fn is_websocket_upgrade(req: &hyper::Request<hyper::body::Incoming>) -> bool {
     check_ws_headers(req.headers())
 }
 
+/// Compute `Sec-WebSocket-Accept` from the client's `Sec-WebSocket-Key`
+/// per RFC 6455 Section 4.2.2.
+fn derive_ws_accept(key: &[u8]) -> String {
+    tokio_tungstenite::tungstenite::handshake::derive_accept_key(key)
+}
+
 /// Build the 101 Switching Protocols response for a valid upgrade.
 ///
-/// Computes `Sec-WebSocket-Accept` from the client's `Sec-WebSocket-Key`
-/// per RFC 6455 Section 4.2.2.
-///
-/// Unused until the router (a later task) wires in upgrade dispatch.
+/// Unused in production code paths (the [`websocket()`] handler builds its
+/// own framework [`Response`] so it can be routed through middleware like
+/// any other handler), but kept as a standalone, independently-testable
+/// unit for the handshake response shape.
 #[allow(dead_code)]
 pub(crate) fn build_upgrade_response(key: &[u8]) -> hyper::Response<Full<Bytes>> {
-    use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
-
-    let accept = derive_accept_key(key);
+    let accept = derive_ws_accept(key);
 
     hyper::Response::builder()
         .status(http::StatusCode::SWITCHING_PROTOCOLS)
@@ -52,6 +67,152 @@ pub(crate) fn build_upgrade_response(key: &[u8]) -> hyper::Response<Full<Bytes>>
         .header("sec-websocket-accept", accept)
         .body(Full::new(Bytes::new()))
         .unwrap()
+}
+
+/// Internal handle passed through per-request state during a WebSocket
+/// upgrade.
+///
+/// Holds the hyper `OnUpgrade` future (so the [`websocket()`] handler can
+/// await the raw upgraded connection once the 101 response has been
+/// accepted by the middleware chain) and the client's `Sec-WebSocket-Key`
+/// (used to compute the `Sec-WebSocket-Accept` response header). The
+/// `Mutex` wrapper makes this `Sync` — required because `Request::provide`
+/// stores values in a `TypeMap` keyed by `Send + Sync + 'static` types —
+/// even though only one handler ever takes the `OnUpgrade` out of it.
+pub(crate) struct WsUpgradeHandle {
+    pub(crate) on_upgrade: Mutex<Option<hyper::upgrade::OnUpgrade>>,
+    pub(crate) ws_key: Vec<u8>,
+}
+
+/// Wrap a handler function as a WebSocket endpoint.
+///
+/// The returned [`Handler`] is registered like any other route handler
+/// (e.g. via `App::get`). When an incoming request is a valid WebSocket
+/// upgrade, the server routes it through the middleware chain first —
+/// middleware can reject the upgrade (e.g. authentication) just like a
+/// normal request — and if it's accepted, this handler completes the
+/// handshake and spawns `handler` to run for the lifetime of the
+/// connection.
+///
+/// If this handler is reached *without* a WebSocket upgrade in progress
+/// (for example, a plain `GET` request to a route registered with
+/// `websocket()`), it returns `426 Upgrade Required`.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use ladoo::prelude::*;
+/// use ladoo::ws::{websocket, WebSocket};
+///
+/// App::new()
+///     .get("/ws", websocket(|mut ws: WebSocket| async move {
+///         while let Some(Ok(msg)) = ws.recv().await {
+///             ws.send(msg).await.ok();
+///         }
+///     }));
+/// ```
+pub fn websocket<F, Fut>(handler: F) -> Box<dyn Handler>
+where
+    F: Fn(WebSocket) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    Box::new(WsHandlerImpl {
+        f: Arc::new(handler),
+    })
+}
+
+struct WsHandlerImpl<F> {
+    f: Arc<F>,
+}
+
+impl<F, Fut> Handler for WsHandlerImpl<F>
+where
+    F: Fn(WebSocket) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    fn call(&self, req: Request) -> Pin<Box<dyn Future<Output = Response> + Send + '_>> {
+        // Clone the Arc *now*, while we still have `&self` — the spawned
+        // upgrade task below needs a 'static, owned copy of the handler.
+        let f = Arc::clone(&self.f);
+
+        Box::pin(async move {
+            // `handle_ws_upgrade` (server.rs) stashes the OnUpgrade handle
+            // in per-request state before routing through middleware. If
+            // it's missing, this handler was reached without a WS upgrade
+            // in flight — e.g. a plain GET to a `websocket()` route.
+            let handle = match req.per_request().get_shared::<WsUpgradeHandle>() {
+                Some(h) => h,
+                None => {
+                    return Response::new(
+                        http::StatusCode::UPGRADE_REQUIRED,
+                        HeaderMap::new(),
+                        Bytes::from_static(b"WebSocket upgrade required"),
+                    );
+                }
+            };
+
+            let on_upgrade = handle
+                .on_upgrade
+                .lock()
+                .expect("WsUpgradeHandle mutex poisoned")
+                .take();
+
+            let Some(on_upgrade) = on_upgrade else {
+                // Already taken — the route matched twice somehow, or a
+                // retry. Either way there's no upgrade left to complete.
+                return Response::new(
+                    http::StatusCode::INTERNAL_SERVER_ERROR,
+                    HeaderMap::new(),
+                    Bytes::from_static(b"WebSocket upgrade already completed"),
+                );
+            };
+
+            let accept = derive_ws_accept(&handle.ws_key);
+
+            // Spawn the connection handler now, before returning the 101.
+            // It won't actually run the user's `f` until `on_upgrade`
+            // resolves, which only happens once this response has been
+            // sent and hyper completes the upgrade on the underlying
+            // connection.
+            tokio::spawn(async move {
+                match on_upgrade.await {
+                    Ok(upgraded) => {
+                        let ws_stream = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                            hyper_util::rt::TokioIo::new(upgraded),
+                            tokio_tungstenite::tungstenite::protocol::Role::Server,
+                            None,
+                        )
+                        .await;
+                        let ws = WebSocket::from_upgraded(ws_stream);
+                        f(ws).await;
+                    }
+                    Err(e) => {
+                        #[cfg(feature = "logging")]
+                        tracing::warn!("WebSocket upgrade failed: {e}");
+                        #[cfg(not(feature = "logging"))]
+                        let _ = e;
+                    }
+                }
+            });
+
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                http::header::UPGRADE,
+                http::HeaderValue::from_static("websocket"),
+            );
+            headers.insert(
+                http::header::CONNECTION,
+                http::HeaderValue::from_static("Upgrade"),
+            );
+            headers.insert(
+                http::HeaderName::from_static("sec-websocket-accept"),
+                http::HeaderValue::from_str(&accept)
+                    .expect("derive_accept_key always produces a valid header value"),
+            );
+
+            Response::new(http::StatusCode::SWITCHING_PROTOCOLS, headers, Bytes::new())
+        })
+    }
 }
 
 #[cfg(test)]

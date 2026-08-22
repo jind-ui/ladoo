@@ -256,6 +256,14 @@ async fn handle_request(
     peer_addr: std::net::SocketAddr,
     body_limit: usize,
 ) -> hyper::Response<Full<Bytes>> {
+    // WebSocket upgrade detection must happen before body collection
+    // below — an upgrade needs the raw `Incoming` body stream (via
+    // `OnUpgrade`), which `Limited::collect()` would otherwise consume.
+    #[cfg(feature = "ws")]
+    if crate::ws::upgrade::is_websocket_upgrade(&hyper_req) {
+        return handle_ws_upgrade(hyper_req, router, state, global_middleware, peer_addr).await;
+    }
+
     let (parts, incoming) = hyper_req.into_parts();
 
     let limited = Limited::new(incoming, body_limit);
@@ -288,6 +296,65 @@ async fn handle_request(
         state,
     );
     request.set_peer_ip(peer_addr.ip().to_string());
+
+    handle_app_request(router, request, global_middleware)
+        .await
+        .into_hyper()
+}
+
+/// Handle a WebSocket upgrade request.
+///
+/// Extracts the hyper `OnUpgrade` handle and `Sec-WebSocket-Key` from the
+/// raw request *before* the body would otherwise be collected, builds a
+/// [`Request`] with an empty body for routing, and stashes the upgrade
+/// handle in per-request state via [`crate::ws::upgrade::WsUpgradeHandle`].
+///
+/// The request is then routed through the normal middleware + handler
+/// chain via [`handle_app_request`] exactly like any other request —
+/// middleware can reject the upgrade (e.g. auth), and the matched
+/// [`websocket()`](crate::ws::websocket) handler is the one that actually
+/// completes the handshake and spawns the connection task, once it finds
+/// the `WsUpgradeHandle` in per-request state.
+#[cfg(feature = "ws")]
+async fn handle_ws_upgrade(
+    mut hyper_req: hyper::Request<hyper::body::Incoming>,
+    router: &Router,
+    state: Arc<TypeMap>,
+    global_middleware: &[Arc<dyn Middleware>],
+    peer_addr: std::net::SocketAddr,
+) -> hyper::Response<Full<Bytes>> {
+    use crate::ws::upgrade::WsUpgradeHandle;
+
+    // Must be removed before `into_parts()` below — extensions live on
+    // the request and would otherwise be dropped along with `parts`.
+    let on_upgrade = hyper_req
+        .extensions_mut()
+        .remove::<hyper::upgrade::OnUpgrade>();
+
+    let ws_key = hyper_req
+        .headers()
+        .get("sec-websocket-key")
+        .map(|v| v.as_bytes().to_vec())
+        .unwrap_or_default();
+
+    let (parts, _incoming) = hyper_req.into_parts();
+
+    let mut request = Request::new(
+        parts.method,
+        parts.uri,
+        parts.headers,
+        Vec::new(), // params are set inside handle_app_request
+        Bytes::new(),
+        state,
+    );
+    request.set_peer_ip(peer_addr.ip().to_string());
+
+    if let Some(on_upgrade) = on_upgrade {
+        request.provide(WsUpgradeHandle {
+            on_upgrade: std::sync::Mutex::new(Some(on_upgrade)),
+            ws_key,
+        });
+    }
 
     handle_app_request(router, request, global_middleware)
         .await

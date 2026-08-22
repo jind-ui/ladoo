@@ -9,3 +9,4 @@ pub(crate) mod upgrade;
 
 pub use error::WsError;
 pub use socket::{Message, WebSocket};
+pub use upgrade::websocket;

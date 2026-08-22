@@ -67,3 +67,5 @@ pub use crate::secure_headers::SecureHeaders;
 pub use crate::state::State;
 pub use http::StatusCode;
 pub use crate::testing::TestClient;
+#[cfg(feature = "ws")]
+pub use crate::ws::{websocket, Message, WebSocket, WsError};

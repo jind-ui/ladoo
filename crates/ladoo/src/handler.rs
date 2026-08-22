@@ -71,6 +71,20 @@ pub struct Sync;
 /// Marker type for async handlers (used by [`IntoHandler`] impl).
 pub struct Async;
 
+/// Marker type for handlers that are already boxed (used by [`IntoHandler`] impl).
+///
+/// Lets helper functions that build a [`Handler`] directly — like
+/// [`websocket()`](crate::ws::websocket) — return `Box<dyn Handler>` and
+/// still be passed straight to route-registration methods (`App::get`,
+/// etc.) that expect an `IntoHandler` implementor.
+pub struct Boxed;
+
+impl IntoHandler<Boxed> for Box<dyn Handler> {
+    fn into_handler(self) -> Box<dyn Handler> {
+        self
+    }
+}
+
 // -- Wrapper structs that implement Handler --
 
 struct SyncHandlerFn<F> {
