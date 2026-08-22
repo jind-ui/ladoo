@@ -160,8 +160,7 @@ impl RedisPubSub {
     /// valid Redis connection URL. This does not attempt a connection —
     /// connections are established lazily on `publish`/`subscribe`.
     pub fn new(redis_url: &str) -> Result<Self, WsError> {
-        let client =
-            redis::Client::open(redis_url).map_err(|e| WsError::PubSub(e.to_string()))?;
+        let client = redis::Client::open(redis_url).map_err(|e| WsError::PubSub(e.to_string()))?;
         Ok(Self {
             client,
             channel_name: "ladoo:ws:broadcast".into(),
@@ -184,8 +183,8 @@ impl PubSub for RedisPubSub {
             origin: self.instance_id.clone(),
             event,
         };
-        let json = serde_json::to_string(&envelope)
-            .map_err(|e| WsError::Serialization(e.to_string()))?;
+        let json =
+            serde_json::to_string(&envelope).map_err(|e| WsError::Serialization(e.to_string()))?;
 
         let mut conn = self
             .client
@@ -338,11 +337,10 @@ mod tests {
             };
             ps1.publish(event).await.unwrap();
 
-            let received =
-                tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
-                    .await
-                    .expect("should receive within timeout")
-                    .expect("channel should not close");
+            let received = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+                .await
+                .expect("should receive within timeout")
+                .expect("channel should not close");
 
             assert_eq!(received.topic, "chat:lobby");
             assert_eq!(received.event, "test_msg");
@@ -386,11 +384,8 @@ mod tests {
             };
             ps.publish(event).await.unwrap();
 
-            let result = tokio::time::timeout(
-                std::time::Duration::from_millis(500),
-                rx.recv(),
-            )
-            .await;
+            let result =
+                tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv()).await;
             assert!(
                 result.is_err(),
                 "should not receive its own published event back"

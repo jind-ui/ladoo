@@ -122,7 +122,12 @@ async fn channel_messaging_broadcast() {
 
     // ws1 sends a message
     ws1.send(tungstenite::Message::Text(
-        channel_msg("chat:lobby", "new_msg", serde_json::json!({"text": "hello"})).into(),
+        channel_msg(
+            "chat:lobby",
+            "new_msg",
+            serde_json::json!({"text": "hello"}),
+        )
+        .into(),
     ))
     .await
     .unwrap();

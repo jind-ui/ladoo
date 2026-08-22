@@ -191,7 +191,11 @@ mod tests {
         let broadcaster = Broadcaster::new(Arc::new(MemoryPubSub));
         let mut rx = broadcaster.subscribe_local();
 
-        broadcaster.broadcast("chat:lobby", "new_msg", serde_json::json!({"text": "hello"}));
+        broadcaster.broadcast(
+            "chat:lobby",
+            "new_msg",
+            serde_json::json!({"text": "hello"}),
+        );
 
         let event = rx.recv().await.unwrap();
         assert_eq!(event.topic, "chat:lobby");
@@ -220,7 +224,11 @@ mod tests {
         let broadcaster = Broadcaster::new(Arc::new(MemoryPubSub));
         let mut rx = broadcaster.subscribe_local();
 
-        broadcaster.send_to("socket-42", "direct_msg", serde_json::json!({"text": "hey"}));
+        broadcaster.send_to(
+            "socket-42",
+            "direct_msg",
+            serde_json::json!({"text": "hey"}),
+        );
 
         let event = rx.recv().await.unwrap();
         // send_to uses a special topic like "__direct:socket-42"
