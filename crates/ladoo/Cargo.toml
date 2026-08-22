@@ -25,6 +25,8 @@ macros = ["dep:ladoo-macros"]
 validation = ["dep:validator"]
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rustls-pki-types"]
 test-server = ["dep:reqwest"]
+ws = ["dep:tokio-tungstenite", "dep:uuid"]
+ws-redis = ["ws", "dep:redis"]
 
 [[example]]
 name = "minimal"
@@ -57,6 +59,8 @@ tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"], optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 validator = { version = "0.19", features = ["derive"], optional = true }
+tokio-tungstenite = { version = "0.24", optional = true }
+redis = { version = "0.27", features = ["tokio-comp", "aio"], optional = true }
 
 [dev-dependencies]
 # Enables `test-server` for this crate's own integration tests (e.g.
@@ -76,4 +80,5 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "time"] }
+tokio-tungstenite = "0.24"
 validator = { version = "0.19", features = ["derive"] }
