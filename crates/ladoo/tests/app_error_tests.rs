@@ -6,8 +6,9 @@ use ladoo::prelude::*;
 enum UserError {
     #[error(status = 404, message = "user not found")]
     NotFound,
+    #[allow(dead_code)]
     #[error(status = 409, message = "email already taken")]
-    DuplicateEmail(String),
+    DuplicateEmail(#[allow(dead_code)] String),
     #[error(status = 422)]
     InvalidAge,
 }
@@ -55,6 +56,7 @@ fn app_error_default_status_is_500() {
 #[test]
 fn app_error_struct_variant() {
     #[derive(Debug, AppError)]
+    #[allow(dead_code)]
     enum ValidationError {
         #[error(status = 422, message = "invalid field")]
         InvalidField { name: String, reason: String },
@@ -124,6 +126,7 @@ fn app_error_ok_result_renders_value() {
 #[test]
 fn app_error_tuple_variant() {
     #[derive(Debug, AppError)]
+    #[allow(dead_code)]
     enum TupleError {
         #[error(status = 400, message = "bad request")]
         Bad(String, u32),
