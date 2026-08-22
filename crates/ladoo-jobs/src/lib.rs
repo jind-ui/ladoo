@@ -94,6 +94,24 @@ pub mod postgres;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 
+#[cfg(any(feature = "postgres", feature = "sqlite"))]
+mod worker_identity {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static CLAIM_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Unique worker identifier for each `claim()` call.
+    ///
+    /// Combines the process ID with a monotonic counter so that multiple
+    /// Workers in the same process never share an ID.
+    pub(crate) fn worker_id() -> String {
+        let seq = CLAIM_COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("worker-{}-{seq}", std::process::id())
+    }
+}
+#[cfg(any(feature = "postgres", feature = "sqlite"))]
+pub(crate) use worker_identity::worker_id;
+
 pub use error::JobStoreError;
 pub use registry::{JobRegistry, PersistentJob};
 pub use scheduler::{CronError, CronScheduler};

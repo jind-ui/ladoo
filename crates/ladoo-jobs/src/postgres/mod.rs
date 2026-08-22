@@ -61,7 +61,7 @@ impl JobStore for PostgresStore {
 
     async fn claim(&self, limit: u32) -> Result<Vec<QueuedJob>, JobStoreError> {
         let now = Utc::now();
-        let worker_id = format!("worker-{}", std::process::id());
+        let worker_id = crate::worker_id();
 
         let rows = sqlx::query(
             "UPDATE _ladoo_jobs SET status = 'running', locked_by = $1, locked_at = $2, updated_at = $2 \
@@ -119,42 +119,60 @@ impl JobStore for PostgresStore {
     }
 
     async fn fail(&self, id: JobId, error: &str) -> Result<(), JobStoreError> {
-        let row = sqlx::query("SELECT attempts, max_retries FROM _ladoo_jobs WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| JobStoreError::Database(e.to_string()))?
-            .ok_or(JobStoreError::NotFound(id))?;
+        let row = sqlx::query(
+            "SELECT attempts, max_retries, locked_by FROM _ladoo_jobs WHERE id = $1 AND status = 'running' FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| JobStoreError::Database(e.to_string()))?
+        .ok_or(JobStoreError::NotFound(id))?;
 
         let attempts = row.get::<i32, _>("attempts") as u32 + 1;
         let max_retries = row.get::<i32, _>("max_retries") as u32;
+        let locked_by: Option<String> = row.get("locked_by");
 
         if attempts <= max_retries {
-            // Schedule retry with exponential backoff: base 1s * 2^attempt, max 60s
             let delay_secs = std::cmp::min(2i64.saturating_pow(attempts - 1), 60);
             let next_run = Utc::now() + chrono::Duration::seconds(delay_secs);
-            sqlx::query(
+            let result = sqlx::query(
                 "UPDATE _ladoo_jobs SET status = 'pending', attempts = $1, last_error = $2, \
-                 run_at = $3, locked_by = NULL, locked_at = NULL, updated_at = NOW() WHERE id = $4",
+                 run_at = $3, locked_by = NULL, locked_at = NULL, updated_at = NOW() \
+                 WHERE id = $4 AND locked_by = $5",
             )
             .bind(attempts as i32)
             .bind(error)
             .bind(next_run)
             .bind(id)
+            .bind(&locked_by)
             .execute(&self.pool)
             .await
             .map_err(|e| JobStoreError::Database(e.to_string()))?;
+
+            if result.rows_affected() == 0 {
+                return Err(JobStoreError::Database(format!(
+                    "job {id} lock was stolen between SELECT and UPDATE"
+                )));
+            }
         } else {
-            sqlx::query(
+            let result = sqlx::query(
                 "UPDATE _ladoo_jobs SET status = 'failed', attempts = $1, last_error = $2, \
-                 locked_by = NULL, locked_at = NULL, updated_at = NOW() WHERE id = $3",
+                 locked_by = NULL, locked_at = NULL, updated_at = NOW() \
+                 WHERE id = $3 AND locked_by = $4",
             )
             .bind(attempts as i32)
             .bind(error)
             .bind(id)
+            .bind(&locked_by)
             .execute(&self.pool)
             .await
             .map_err(|e| JobStoreError::Database(e.to_string()))?;
+
+            if result.rows_affected() == 0 {
+                return Err(JobStoreError::Database(format!(
+                    "job {id} lock was stolen between SELECT and UPDATE"
+                )));
+            }
         }
 
         Ok(())
