@@ -338,6 +338,19 @@ impl TestServer {
         format!("{}{}", self.base_url, path)
     }
 
+    /// Returns the TCP port this server is listening on.
+    ///
+    /// Useful for building non-HTTP URLs against the server (e.g. `ws://`
+    /// for WebSocket integration tests) where [`url`](TestServer::url)'s
+    /// `http://` scheme doesn't apply.
+    pub fn port(&self) -> u16 {
+        self.base_url
+            .rsplit(':')
+            .next()
+            .and_then(|p| p.parse().ok())
+            .expect("base_url always ends with a numeric port")
+    }
+
     /// Start building a request with an arbitrary HTTP method.
     pub fn request(&self, method: Method, path: &str) -> ServerTestRequest<'_> {
         ServerTestRequest::new(self, method, path)

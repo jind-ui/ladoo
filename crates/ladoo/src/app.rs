@@ -521,6 +521,66 @@ impl App {
         self
     }
 
+    /// Configure WebSocket channels with the default in-process `MemoryPubSub`.
+    ///
+    /// Registers a [`Broadcaster`](crate::ws::Broadcaster) in app state
+    /// (available as `State<Broadcaster>` in any HTTP or channel handler)
+    /// and a channel WebSocket endpoint at `/ws`. Use
+    /// [`channel_with_pubsub`](App::channel_with_pubsub) instead for
+    /// multi-server deployments, where a cross-server `PubSub` backend
+    /// (e.g. Redis) is needed to fan broadcasts out to other instances.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ladoo::prelude::*;
+    /// use ladoo::ws::{Channel, ChannelContext, ChannelRouter, Reply};
+    ///
+    /// struct ChatChannel;
+    ///
+    /// #[async_trait]
+    /// impl Channel for ChatChannel {
+    ///     async fn join(&self, topic: &str, _: serde_json::Value, _: &ChannelContext) -> Result<serde_json::Value, String> {
+    ///         Ok(serde_json::json!({"joined": topic}))
+    ///     }
+    ///     async fn handle(&self, _: &str, _: serde_json::Value, _: &ChannelContext) -> Result<Reply, ()> {
+    ///         Ok(Reply::None)
+    ///     }
+    /// }
+    ///
+    /// App::new()
+    ///     .channel(ChannelRouter::new().route("chat:*", ChatChannel))
+    ///     .run("0.0.0.0:3000");
+    /// ```
+    #[cfg(feature = "ws")]
+    pub fn channel(self, router: crate::ws::ChannelRouter) -> Self {
+        self.channel_with_pubsub(router, crate::ws::MemoryPubSub)
+    }
+
+    /// Configure WebSocket channels with a custom `PubSub` backend.
+    ///
+    /// Identical to [`channel`](App::channel), except broadcasts are also
+    /// published to the given [`PubSub`](crate::ws::PubSub) implementation
+    /// so other server instances can re-deliver them to their own local
+    /// subscribers. Use this for multi-server deployments (e.g. with a
+    /// Redis-backed `PubSub`).
+    #[cfg(feature = "ws")]
+    pub fn channel_with_pubsub(
+        mut self,
+        router: crate::ws::ChannelRouter,
+        pubsub: impl crate::ws::PubSub,
+    ) -> Self {
+        let broadcaster = crate::ws::Broadcaster::new(std::sync::Arc::new(pubsub));
+        self.state.insert_shared(broadcaster.clone());
+        self.state.insert_shared(router);
+        self.router.add(
+            http::Method::GET,
+            "/ws",
+            crate::ws::upgrade::websocket_channel(broadcaster),
+        );
+        self
+    }
+
     /// Mount a standalone router under a prefix.
     ///
     /// All routes from the given router are added with the prefix

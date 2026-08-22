@@ -59,6 +59,11 @@ pub use crate::router::Router;
 pub use crate::secure_headers::SecureHeaders;
 pub use crate::state::State;
 pub use crate::testing::TestClient;
+#[cfg(feature = "ws")]
+pub use crate::ws::{
+    websocket, Broadcaster, Channel, ChannelContext, ChannelRouter, Message, Reply, WebSocket,
+    WsError,
+};
 #[cfg(feature = "macros")]
 pub use crate::AppError;
 #[cfg(all(feature = "macros", feature = "config"))]
