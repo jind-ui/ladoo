@@ -68,8 +68,8 @@ pub(crate) async fn run_channel_loop(
                     }
                     Some(Ok(Message::Close)) | None => break,
                     Some(Ok(Message::Binary(_))) => {
-                        // Binary frames are passed through as-is — they are
-                        // not part of the channel wire protocol.
+                        // Binary frames are ignored — they are not part of
+                        // the channel wire protocol.
                     }
                     Some(Err(_)) => break,
                 }
