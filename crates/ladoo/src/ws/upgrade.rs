@@ -12,7 +12,10 @@ use http_body_util::Full;
 use crate::handler::Handler;
 use crate::request::Request;
 use crate::response::Response;
+use crate::state::TypeMap;
 
+use super::broadcaster::Broadcaster;
+use super::router::ChannelRouter;
 use super::socket::WebSocket;
 
 /// Check if headers indicate a valid WebSocket upgrade request.
@@ -185,6 +188,109 @@ where
                         .await;
                         let ws = WebSocket::from_upgraded(ws_stream);
                         f(ws).await;
+                    }
+                    Err(e) => {
+                        #[cfg(feature = "logging")]
+                        tracing::warn!("WebSocket upgrade failed: {e}");
+                        #[cfg(not(feature = "logging"))]
+                        let _ = e;
+                    }
+                }
+            });
+
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                http::header::UPGRADE,
+                http::HeaderValue::from_static("websocket"),
+            );
+            headers.insert(
+                http::header::CONNECTION,
+                http::HeaderValue::from_static("Upgrade"),
+            );
+            headers.insert(
+                http::HeaderName::from_static("sec-websocket-accept"),
+                http::HeaderValue::from_str(&accept)
+                    .expect("derive_accept_key always produces a valid header value"),
+            );
+
+            Response::new(http::StatusCode::SWITCHING_PROTOCOLS, headers, Bytes::new())
+        })
+    }
+}
+
+/// Create the WebSocket handler for the Channel system's `/ws` endpoint.
+///
+/// Registered by [`crate::app::App::channel`]. Unlike [`websocket()`],
+/// which hands the raw [`WebSocket`] to a user-supplied closure, this
+/// handler runs the framework's own [`super::connection::run_channel_loop`]
+/// for every connection — extracting the [`ChannelRouter`] from the
+/// request's application state and pairing it with the given
+/// [`Broadcaster`].
+pub(crate) fn websocket_channel(broadcaster: Broadcaster) -> Box<dyn Handler> {
+    Box::new(ChannelWsHandler { broadcaster })
+}
+
+struct ChannelWsHandler {
+    broadcaster: Broadcaster,
+}
+
+impl Handler for ChannelWsHandler {
+    fn call(&self, req: Request) -> Pin<Box<dyn Future<Output = Response> + Send + '_>> {
+        let broadcaster = self.broadcaster.clone();
+        // The app state is shared (`Arc<TypeMap>`) — clone the handle now,
+        // while we still have `&Request`, for use in the spawned task.
+        let state: Arc<TypeMap> = req.extensions_arc();
+
+        Box::pin(async move {
+            let router = match state.get_shared::<ChannelRouter>() {
+                Some(r) => r,
+                None => {
+                    return Response::new(
+                        http::StatusCode::INTERNAL_SERVER_ERROR,
+                        HeaderMap::new(),
+                        Bytes::from_static(b"channel router not configured"),
+                    );
+                }
+            };
+
+            let handle = match req.per_request().get_shared::<WsUpgradeHandle>() {
+                Some(h) => h,
+                None => {
+                    return Response::new(
+                        http::StatusCode::UPGRADE_REQUIRED,
+                        HeaderMap::new(),
+                        Bytes::from_static(b"WebSocket upgrade required"),
+                    );
+                }
+            };
+
+            let on_upgrade = handle
+                .on_upgrade
+                .lock()
+                .expect("WsUpgradeHandle mutex poisoned")
+                .take();
+
+            let Some(on_upgrade) = on_upgrade else {
+                return Response::new(
+                    http::StatusCode::INTERNAL_SERVER_ERROR,
+                    HeaderMap::new(),
+                    Bytes::from_static(b"WebSocket upgrade already completed"),
+                );
+            };
+
+            let accept = derive_ws_accept(&handle.ws_key);
+
+            tokio::spawn(async move {
+                match on_upgrade.await {
+                    Ok(upgraded) => {
+                        let ws_stream = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                            hyper_util::rt::TokioIo::new(upgraded),
+                            tokio_tungstenite::tungstenite::protocol::Role::Server,
+                            None,
+                        )
+                        .await;
+                        let ws = WebSocket::from_upgraded(ws_stream);
+                        super::connection::run_channel_loop(ws, router, broadcaster, state).await;
                     }
                     Err(e) => {
                         #[cfg(feature = "logging")]

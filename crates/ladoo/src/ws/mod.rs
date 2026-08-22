@@ -5,6 +5,7 @@
 
 pub mod broadcaster;
 pub mod channel;
+pub(crate) mod connection;
 pub mod error;
 pub mod pubsub;
 pub mod router;

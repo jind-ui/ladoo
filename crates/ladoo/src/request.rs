@@ -278,6 +278,16 @@ impl Request {
         &self.extensions
     }
 
+    /// Returns the application state map as an owned, cheaply-cloned
+    /// `Arc`, for handlers that need to hand it to a spawned task rather
+    /// than borrowing it for the lifetime of the request (e.g. the
+    /// WebSocket channel connection loop, which outlives the request that
+    /// upgraded it).
+    #[cfg(feature = "ws")]
+    pub(crate) fn extensions_arc(&self) -> Arc<TypeMap> {
+        Arc::clone(&self.extensions)
+    }
+
     /// Insert a value into this request's per-request state.
     ///
     /// Used by framework middleware to inject request-scoped values

@@ -68,4 +68,7 @@ pub use crate::state::State;
 pub use http::StatusCode;
 pub use crate::testing::TestClient;
 #[cfg(feature = "ws")]
-pub use crate::ws::{websocket, Message, WebSocket, WsError};
+pub use crate::ws::{
+    websocket, Broadcaster, Channel, ChannelContext, ChannelRouter, Message, Reply, WebSocket,
+    WsError,
+};
