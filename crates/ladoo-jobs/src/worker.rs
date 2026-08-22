@@ -82,10 +82,25 @@ impl<S: JobStore> Worker<S> {
                     let result = registry.dispatch(&job.name, job.payload.clone()).await;
                     match result {
                         Ok(()) => {
-                            let _ = store.complete(job.id).await;
+                            if let Err(e) = store.complete(job.id).await {
+                                tracing::error!(
+                                    job_id = job.id,
+                                    job_name = %job.name,
+                                    error = %e,
+                                    "failed to mark job as completed"
+                                );
+                            }
                         }
                         Err(err) => {
-                            let _ = store.fail(job.id, &err).await;
+                            if let Err(e) = store.fail(job.id, &err).await {
+                                tracing::error!(
+                                    job_id = job.id,
+                                    job_name = %job.name,
+                                    error = %e,
+                                    handler_error = %err,
+                                    "failed to mark job as failed"
+                                );
+                            }
                         }
                     }
                     drop(permit);
